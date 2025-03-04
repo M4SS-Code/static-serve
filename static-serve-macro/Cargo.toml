@@ -1,0 +1,27 @@
+[package]
+name = "static-serve-macro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+description.workspace = true
+categories.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+display_full_error = "1.1"
+flate2 = "1.1"
+glob = "0.3"
+proc-macro2 = "1.0"
+quote = "1.0"
+sha1 = "0.10"
+syn = { version = "2.0", default-features = false }
+thiserror = "2.0.12"
+zstd = "0.13"
+
+[lints]
+workspace = true

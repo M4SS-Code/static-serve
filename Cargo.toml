@@ -1,16 +1,26 @@
-[package]
-name = "static-serve"
+[workspace]
+members = [
+    "static-serve",
+    "static-serve-macro",
+]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.83"
+description = "A helper for compressing and embedding static assets in an Axum webserver"
+repository = "https://github.com/M4SS-Code/static-serve"
 license = "MIT OR Apache-2.0"
+keywords = ["static", "axum", "embed", "web", "conditional"]
+categories = ["web-programming", "web-programming::http-server", "filesystem"]
 
-[dependencies]
-
-[lints.rust]
+[workspace.lints.rust]
+missing_docs = "warn"
 unsafe_code = "deny"
 unreachable_pub = "deny"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 await_holding_refcell_ref = "deny"

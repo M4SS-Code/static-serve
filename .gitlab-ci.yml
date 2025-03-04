@@ -21,6 +21,7 @@ rust:clippy:
   stage: test
   image: rust:1.84-alpine3.21
   before_script:
+    - apk add musl-dev
     - rustup component add clippy
   script:
     - cargo clippy --all-features -- -D warnings

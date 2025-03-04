@@ -1,0 +1,18 @@
+[package]
+name = "static-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+description.workspace = true
+categories.workspace = true
+repository.workspace = true
+
+[dependencies]
+static-serve-macro = { path = "../static-serve-macro", version = "0.1.0" }
+axum = { version = "0.8", default-features = false }
+bytes = "1.10"
+
+[lints]
+workspace = true
