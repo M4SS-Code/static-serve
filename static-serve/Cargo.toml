@@ -14,5 +14,12 @@ static-serve-macro = { path = "../static-serve-macro", version = "0.1.0" }
 axum = { version = "0.8", default-features = false }
 bytes = "1.10"
 
+[dev-dependencies]
+http-body-util = "0.1"
+tokio = { version = "1.44", features = ["rt", "macros"] }
+tower = { version = "0.5", features = ["util"] }
+zstd = "0.13"
+flate2 = "1.1"
+
 [lints]
 workspace = true

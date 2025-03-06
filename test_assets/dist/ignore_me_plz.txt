@@ -1,0 +1,1 @@
+This file should only get included and served when the default ignore list is disabled.
