@@ -5,11 +5,8 @@ A Rust library for compressing and embedding static assets in a web server using
 ## Features
 
 - **Embed static assets** at compile-time for efficient serving
-
 - **Automatic compression** with `gzip` and `zstd`
-
 - **ETag support** for conditional requests and caching
-
 - **Seamless Axum integration** with request extraction for encoding and caching headers
 
 ## Installation
@@ -28,7 +25,7 @@ axum = "0.8"
 
 Use the `embed_assets!` macro to create a `static_router()` function in scope which will include your static files, embedding them into your binary:
 
-```rust
+```rust,ignore
 use static_serve::embed_assets;
 
 embed_assets!("assets", compress = true);
@@ -54,13 +51,11 @@ The crate automatically handles:
 ### Optional parameters
 
 - `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
-
 - `ignore_dirs = [my_ignore_dir, other_ignore_dir]` - a bracketed list of valid Rust identifiers or `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
 
 ## Example
 
-```rust
-
+```rust,ignore
 use axum::{Router, Server};
 use static_serve::embed_assets;
 

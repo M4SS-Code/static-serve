@@ -1,5 +1,5 @@
-//! Crate for compressing and embedding static assets
-//! in a web server
+#![doc = include_str!("../README.md")]
+
 use std::convert::Infallible;
 
 use axum::{
