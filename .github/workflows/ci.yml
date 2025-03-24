@@ -1,0 +1,66 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  fmt:
+    name: rustfmt / 1.85.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: rustfmt
+
+      - name: Rust rustfmt
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy / 1.85.0
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: clippy
+
+      - name: Run clippy
+        run: cargo clippy --all-features -- -D warnings
+
+  test:
+    name: test / ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - name: stable
+            rust: stable
+          - name: beta
+            rust: beta
+          - name: nightly
+            rust: nightly
+          - name: 1.83.0
+            rust: 1.83.0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Run tests
+        run: cargo test
