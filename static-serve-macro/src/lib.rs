@@ -4,7 +4,6 @@
 
 use std::{
     convert::Into,
-    fmt::Display,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -109,13 +108,13 @@ impl ToTokens for EmbedAssets {
     }
 }
 
-struct AssetsDir(ValidAssetsDirTypes);
+struct AssetsDir(LitStr);
 
 impl Parse for AssetsDir {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let input_span = input.span();
-        let assets_dir: ValidAssetsDirTypes = input.parse()?;
-        let literal = assets_dir.to_string();
+        let assets_dir: LitStr = input.parse()?;
+        let literal = assets_dir.value();
         let path = Path::new(&literal);
         let metadata = match fs::metadata(path) {
             Ok(meta) => meta,
@@ -147,36 +146,6 @@ impl Parse for AssetsDir {
     }
 }
 
-enum ValidAssetsDirTypes {
-    LiteralStr(LitStr),
-    Ident(Ident),
-}
-
-impl Display for ValidAssetsDirTypes {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::LiteralStr(inner) => write!(f, "{}", inner.value()),
-            Self::Ident(inner) => write!(f, "{inner}"),
-        }
-    }
-}
-
-impl Parse for ValidAssetsDirTypes {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if let Ok(inner) = input.parse::<LitStr>() {
-            Ok(ValidAssetsDirTypes::LiteralStr(inner))
-        } else {
-            let inner = input.parse::<Ident>().map_err(|_| {
-                syn::Error::new(
-                    input.span(),
-                    "Assets directory must be a literal string or valid identifier",
-                )
-            })?;
-            Ok(ValidAssetsDirTypes::Ident(inner))
-        }
-    }
-}
-
 struct IgnoreDirs(Vec<PathBuf>);
 
 struct IgnoreDirsWithSpan(Vec<(PathBuf, Span)>);
@@ -190,11 +159,12 @@ impl Parse for IgnoreDirsWithSpan {
         while !inner_content.is_empty() {
             let directory_span = inner_content.span();
             let directory_str = inner_content.parse::<LitStr>()?;
+            let path = PathBuf::from(directory_str.value());
+            dirs.push((path, directory_span));
+
             if !inner_content.is_empty() {
                 inner_content.parse::<Token![,]>()?;
             }
-            let path = PathBuf::from(directory_str.value());
-            dirs.push((path, directory_span));
         }
 
         Ok(IgnoreDirsWithSpan(dirs))
@@ -203,11 +173,11 @@ impl Parse for IgnoreDirsWithSpan {
 
 fn validate_ignore_dirs(
     ignore_dirs: IgnoreDirsWithSpan,
-    assets_dir: &ValidAssetsDirTypes,
+    assets_dir: &LitStr,
 ) -> syn::Result<IgnoreDirs> {
     let mut valid_ignore_dirs = Vec::new();
     for (dir, span) in ignore_dirs.0 {
-        let full_path = PathBuf::from(assets_dir.to_string()).join(&dir);
+        let full_path = PathBuf::from(assets_dir.value()).join(&dir);
         match fs::metadata(&full_path) {
             Ok(meta) if !meta.is_dir() => {
                 return Err(syn::Error::new(
@@ -247,11 +217,11 @@ impl Parse for ShouldCompress {
 }
 
 fn generate_static_routes(
-    assets_dir: &ValidAssetsDirTypes,
+    assets_dir: &LitStr,
     ignore_dirs: &IgnoreDirs,
     should_compress: &LitBool,
 ) -> Result<TokenStream, error::Error> {
-    let assets_dir_abs = Path::new(&assets_dir.to_string())
+    let assets_dir_abs = Path::new(&assets_dir.value())
         .canonicalize()
         .map_err(Error::CannotCanonicalizeDirectory)?;
     let assets_dir_abs_str = assets_dir_abs
