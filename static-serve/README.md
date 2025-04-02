@@ -46,12 +46,12 @@ The crate automatically handles:
 
 ### Required parameter
 
-- `path_to_dir` - a valid Rust identifier or `&str` of the path to the static files to be included
+- `path_to_dir` - a valid `&str` string literal of the path to the static files to be included
 
 ### Optional parameters
 
 - `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
-- `ignore_dirs = [my_ignore_dir, other_ignore_dir]` - a bracketed list of valid Rust identifiers or `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
+- `ignore_dirs = [my_ignore_dir, other_ignore_dir]` - a bracketed list of `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
 
 ## Example
 
