@@ -202,7 +202,7 @@ fn validate_ignore_dirs(
                     ),
                 ))
             }
-        };
+        }
     }
     Ok(IgnoreDirs(valid_ignore_dirs))
 }
