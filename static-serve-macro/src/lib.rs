@@ -357,15 +357,28 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<LitByteStr
         .then(|| LitByteStr::new(compressed, Span::call_site()))
 }
 
-fn file_content_type(path: &Path) -> Result<&'static str, error::Error> {
+/// Use `mime_guess` to get the best guess of the file's MIME type
+/// by looking at its extension, or return an error if unable.
+///
+/// We accept the first guess because [`mime_guess` updates the order
+/// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
+fn file_content_type(path: &Path) -> Result<String, error::Error> {
     match path.extension() {
-        Some(ext) if ext.eq_ignore_ascii_case("css") => Ok("text/css"),
-        Some(ext) if ext.eq_ignore_ascii_case("js") => Ok("text/javascript"),
-        Some(ext) if ext.eq_ignore_ascii_case("txt") => Ok("text/plain"),
-        Some(ext) if ext.eq_ignore_ascii_case("woff") => Ok("font/woff"),
-        Some(ext) if ext.eq_ignore_ascii_case("woff2") => Ok("font/woff2"),
-        Some(ext) if ext.eq_ignore_ascii_case("svg") => Ok("image/svg+xml"),
-        ext => Err(error::Error::UnknownFileExtension(ext.map(Into::into))),
+        Some(ext) => {
+            let guesses = mime_guess::MimeGuess::from_ext(
+                ext.to_str()
+                    .ok_or(error::Error::InvalidFileExtension(path.into()))?,
+            );
+
+            if let Some(guess) = guesses.first_raw() {
+                Ok(guess.to_owned())
+            } else {
+                Err(error::Error::UnknownFileExtension(
+                    path.extension().map(Into::into),
+                ))
+            }
+        }
+        None => Err(error::Error::UnknownFileExtension(None)),
     }
 }
 
