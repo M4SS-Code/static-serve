@@ -11,6 +11,8 @@ use thiserror::Error;
 pub(crate) enum Error {
     #[error("{}", UnknownFileExtension(.0.as_deref()))]
     UnknownFileExtension(Option<OsString>),
+    #[error("File extension for file {} is not valid unicode", 0.to_string())]
+    InvalidFileExtension(OsString),
     #[error("Cannot canonicalize assets directory")]
     CannotCanonicalizeDirectory(#[source] io::Error),
     #[error("Invalid unicode in directory name")]
