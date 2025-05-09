@@ -12,7 +12,7 @@ use axum::{
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use static_serve_macro::embed_assets;
+use static_serve_macro::{embed_asset, embed_assets};
 
 enum Compression {
     Zstd,
@@ -427,5 +427,233 @@ async fn doesnt_strip_html_when_not_specified() {
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     let expected_body_bytes = include_bytes!("../../test_assets/with_html/index.html");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_one_file_uncompressed() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!(
+        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        compress = true
+    );
+    let router = router.route("/ignore", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/ignore", &Compression::None);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes =
+        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_one_file_compressed_zstd() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!("../static-serve/test_assets/big/app.js", compress = true);
+    let router = router.route("/app.js", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/app.js", &Compression::Zstd);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_one_file_same_etag() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!("../static-serve/test_assets/big/app.js", compress = true);
+    let router = router.route("/app.js", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/app.js", &Compression::Zstd);
+
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+    let etag = parts
+        .headers
+        .get("etag")
+        .expect("no etag header when there should be one!");
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_NONE_MATCH, etag)
+        .header(ACCEPT_ENCODING, "zstd")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        parts
+            .headers
+            .get("content-length")
+            .expect("no content-length header!"),
+        "0"
+    );
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    assert!(collected_body_bytes.is_empty());
+}
+
+#[tokio::test]
+async fn handles_one_file_different_etag() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!("../static-serve/test_assets/big/app.js", compress = true);
+    let router = router.route("/app.js", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/app.js", &Compression::Zstd);
+
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_NONE_MATCH, "n0t4r34l3t4g")
+        .header(ACCEPT_ENCODING, "zstd")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::OK);
+    assert_ne!(
+        parts
+            .headers
+            .get("content-length")
+            .expect("no content-length header!"),
+        "0",
+        "content length is unexpectedly zero!"
+    );
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    assert!(!collected_body_bytes.is_empty());
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn using_both_macros_together_works() {
+    embed_assets!("../static-serve/test_assets/big", compress = true);
+    let router: Router<()> = static_router();
+    let handler = embed_asset!("../static-serve/test_assets/dist/ignore_me_plz.txt");
+    let router = router.route("/ignore", handler);
+
+    // Get app.js (created by `embed_assets!`)
+    let request = create_request("/app.js", &Compression::Zstd);
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get(CONTENT_ENCODING),
+        Some(&HeaderValue::from_str("zstd").unwrap())
+    );
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    // Get `ignore_me_plz.txt` (mapped to `/ignore`, created by `embed_asset!`)
+    let request = create_request("/ignore", &Compression::None);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes =
+        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
