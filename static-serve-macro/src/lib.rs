@@ -1,6 +1,5 @@
 //! Proc macro crate for compressing and embedding static assets
 //! in a web server
-//! Macro invocation: `embed_assets!('path/to/assets', compress = true);`
 
 use std::{
     convert::Into,
@@ -29,6 +28,113 @@ use error::{Error, GzipType, ZstdType};
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
     quote! { #parsed }.into()
+}
+
+#[proc_macro]
+/// Embed and optionally compress a single static asset for a web server
+pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let parsed = parse_macro_input!(input as EmbedAsset);
+    quote! { #parsed }.into()
+}
+
+struct EmbedAsset {
+    asset_file: AssetFile,
+    should_compress: ShouldCompress,
+}
+
+struct AssetFile(LitStr);
+
+impl Parse for EmbedAsset {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let asset_file: AssetFile = input.parse()?;
+
+        // Default to no compression
+        let mut maybe_should_compress = None;
+
+        while !input.is_empty() {
+            input.parse::<Token![,]>()?;
+            let key: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+
+            if matches!(key.to_string().as_str(), "compress") {
+                let value = input.parse()?;
+                maybe_should_compress = Some(value);
+            } else {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "Unknown key in `embed_asset!` macro. Expected `compress` but got {key}"
+                    ),
+                ));
+            }
+        }
+
+        let should_compress = maybe_should_compress.unwrap_or_else(|| {
+            ShouldCompress(LitBool {
+                value: false,
+                span: Span::call_site(),
+            })
+        });
+
+        Ok(Self {
+            asset_file,
+            should_compress,
+        })
+    }
+}
+
+impl Parse for AssetFile {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let input_span = input.span();
+        let asset_file: LitStr = input.parse()?;
+        let literal = asset_file.value();
+        let path = Path::new(&literal);
+        let metadata = match fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
+                return Err(syn::Error::new(
+                    input_span,
+                    format!("The specified asset file ({literal}) does not exist."),
+                ));
+            }
+            Err(e) => {
+                return Err(syn::Error::new(
+                    input_span,
+                    format!("Error reading file {literal}: {}", DisplayFullError(&e)),
+                ));
+            }
+        };
+
+        if metadata.is_dir() {
+            return Err(syn::Error::new(
+                input_span,
+                "The specified asset is a directory, not a file. Did you mean to call `embed_assets!` instead?",
+            ));
+        }
+
+        Ok(AssetFile(asset_file))
+    }
+}
+
+impl ToTokens for EmbedAsset {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let AssetFile(asset_file) = &self.asset_file;
+        let ShouldCompress(should_compress) = &self.should_compress;
+
+        let result = generate_static_handler(asset_file, should_compress);
+
+        match result {
+            Ok(value) => {
+                tokens.extend(quote! {
+                    #value
+                });
+            }
+            Err(err_message) => {
+                let error = syn::Error::new(Span::call_site(), err_message);
+                tokens.extend(error.to_compile_error());
+            }
+        }
+    }
 }
 
 struct EmbedAssets {
@@ -279,30 +385,19 @@ fn generate_static_routes(
             continue;
         }
 
-        let contents = fs::read(&entry).map_err(Error::CannotReadEntryContents)?;
-
-        // Optionally compress files
-        let (maybe_gzip, maybe_zstd) = if should_compress.value {
-            let gzip = gzip_compress(&contents)?;
-            let zstd = zstd_compress(&contents)?;
-            (gzip, zstd)
-        } else {
-            (None, None)
-        };
-
-        // Create parameters for `::static_serve::static_route()`
-        let mut entry_path = entry.to_str().ok_or(Error::InvalidUnicodeInEntryName)?;
-        let content_type = file_content_type(&entry)?;
-        if should_strip_html_ext.value && content_type == "text/html" {
-            entry_path = strip_html_ext(&entry)?;
-        }
-        entry_path = entry_path
-            .strip_prefix(assets_dir_abs_str)
-            .unwrap_or_default();
-        let etag_str = etag(&contents);
-        let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
-        let maybe_gzip = option_to_token_stream_option(maybe_gzip.as_ref());
-        let maybe_zstd = option_to_token_stream_option(maybe_zstd.as_ref());
+        let EmbeddedFileInfo {
+            entry_path,
+            content_type,
+            etag_str,
+            lit_byte_str_contents,
+            maybe_gzip,
+            maybe_zstd,
+        } = EmbeddedFileInfo::from_path(
+            &entry,
+            Some(assets_dir_abs_str),
+            should_compress,
+            should_strip_html_ext,
+        )?;
 
         routes.push(quote! {
             router = ::static_serve::static_route(
@@ -325,6 +420,121 @@ fn generate_static_routes(
             router
         }
     })
+}
+
+fn generate_static_handler(
+    asset_file: &LitStr,
+    should_compress: &LitBool,
+) -> Result<TokenStream, error::Error> {
+    let asset_file_abs = Path::new(&asset_file.value())
+        .canonicalize()
+        .map_err(Error::CannotCanonicalizeFile)?;
+
+    let EmbeddedFileInfo {
+        entry_path: _,
+        content_type,
+        etag_str,
+        lit_byte_str_contents,
+        maybe_gzip,
+        maybe_zstd,
+    } = EmbeddedFileInfo::from_path(
+        &asset_file_abs,
+        None,
+        should_compress,
+        &LitBool {
+            value: false,
+            span: Span::call_site(),
+        },
+    )?;
+
+    let route = quote! {
+        ::static_serve::static_method_router(
+            #content_type,
+            #etag_str,
+            #lit_byte_str_contents,
+            #maybe_gzip,
+            #maybe_zstd,
+        )
+    };
+
+    Ok(route)
+}
+
+struct OptionBytesSlice(Option<LitByteStr>);
+impl ToTokens for OptionBytesSlice {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(if let Some(inner) = &self.0.as_ref() {
+            quote! { ::std::option::Option::Some(#inner) }
+        } else {
+            quote! { ::std::option::Option::None }
+        });
+    }
+}
+
+struct EmbeddedFileInfo<'a> {
+    /// When creating a `Router`, we need the API path/route to the
+    /// target file. If creating a `Handler`, this is not needed since
+    /// the router is responsible for the file's path on the server.
+    entry_path: Option<&'a str>,
+    content_type: String,
+    etag_str: String,
+    lit_byte_str_contents: LitByteStr,
+    maybe_gzip: OptionBytesSlice,
+    maybe_zstd: OptionBytesSlice,
+}
+
+impl<'a> EmbeddedFileInfo<'a> {
+    fn from_path(
+        pathbuf: &'a PathBuf,
+        assets_dir_abs_str: Option<&str>,
+        should_compress: &LitBool,
+        should_strip_html_ext: &LitBool,
+    ) -> Result<Self, Error> {
+        let contents = fs::read(pathbuf).map_err(Error::CannotReadEntryContents)?;
+
+        // Optionally compress files
+        let (maybe_gzip, maybe_zstd) = if should_compress.value {
+            let gzip = gzip_compress(&contents)?;
+            let zstd = zstd_compress(&contents)?;
+            (gzip, zstd)
+        } else {
+            (None, None)
+        };
+
+        let content_type = file_content_type(pathbuf)?;
+
+        // entry_path is only needed for the router (embed_assets!)
+        let entry_path = if let Some(dir) = assets_dir_abs_str {
+            if should_strip_html_ext.value && content_type == "text/html" {
+                Some(
+                    strip_html_ext(pathbuf)?
+                        .strip_prefix(dir)
+                        .unwrap_or_default(),
+                )
+            } else {
+                pathbuf
+                    .to_str()
+                    .ok_or(Error::InvalidUnicodeInEntryName)?
+                    .strip_prefix(dir)
+            }
+        } else {
+            None
+        };
+
+        let etag_str = etag(&contents);
+        let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
+        let maybe_gzip = OptionBytesSlice(maybe_gzip);
+        let maybe_zstd = OptionBytesSlice(maybe_zstd);
+
+        Ok(Self {
+            entry_path,
+            content_type,
+            etag_str,
+            lit_byte_str_contents,
+            maybe_gzip,
+            maybe_zstd,
+        })
+    }
 }
 
 fn gzip_compress(contents: &[u8]) -> Result<Option<LitByteStr>, Error> {
@@ -369,14 +579,6 @@ fn write_to_zstd_encoder(
     encoder.write_all(contents)?;
 
     Ok(())
-}
-
-fn option_to_token_stream_option<T: ToTokens>(opt: Option<&T>) -> TokenStream {
-    if let Some(inner) = opt {
-        quote! { ::std::option::Option::Some(#inner) }
-    } else {
-        quote! { ::std::option::Option::None }
-    }
 }
 
 fn is_compression_significant(compressed_len: usize, contents_len: usize) -> bool {

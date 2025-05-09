@@ -33,6 +33,8 @@ pub(crate) enum Error {
     Glob(#[source] GlobError),
     #[error("Cannot get entry metadata")]
     CannotGetMetadata(#[source] io::Error),
+    #[error("Cannot canonicalize asset file")]
+    CannotCanonicalizeFile(#[source] io::Error),
 }
 
 struct UnknownFileExtension<'a>(Option<&'a OsStr>);

@@ -13,12 +13,12 @@ use axum::{
         StatusCode,
     },
     response::IntoResponse,
-    routing::get,
+    routing::{get, MethodRouter},
     Router,
 };
 use bytes::Bytes;
 
-pub use static_serve_macro::embed_assets;
+pub use static_serve_macro::{embed_asset, embed_assets};
 
 /// The accept/reject status for gzip and zstd encoding
 #[derive(Debug, Copy, Clone)]
@@ -91,39 +91,84 @@ where
         web_path,
         get(
             move |accept_encoding: AcceptEncoding, if_none_match: IfNoneMatch| async move {
-                let headers_base = [
-                    (CONTENT_TYPE, HeaderValue::from_static(content_type)),
-                    (ETAG, HeaderValue::from_static(etag)),
-                    (
-                        CACHE_CONTROL,
-                        HeaderValue::from_static("public, max-age=31536000, immutable"),
-                    ),
-                    (VARY, HeaderValue::from_static("Accept-Encoding")),
-                ];
-
-                match (
-                    if_none_match.matches(etag),
-                    accept_encoding.gzip,
-                    accept_encoding.zstd,
+                static_inner(
+                    content_type,
+                    etag,
+                    body,
                     body_gz,
                     body_zst,
-                ) {
-                    (true, _, _, _, _) => (headers_base, StatusCode::NOT_MODIFIED).into_response(),
-                    (false, _, true, _, Some(body_zst)) => (
-                        headers_base,
-                        [(CONTENT_ENCODING, HeaderValue::from_static("zstd"))],
-                        Bytes::from_static(body_zst),
-                    )
-                        .into_response(),
-                    (false, true, _, Some(body_gz), _) => (
-                        headers_base,
-                        [(CONTENT_ENCODING, HeaderValue::from_static("gzip"))],
-                        Bytes::from_static(body_gz),
-                    )
-                        .into_response(),
-                    _ => (headers_base, Bytes::from_static(body)).into_response(),
-                }
+                    accept_encoding,
+                    &if_none_match,
+                )
             },
         ),
     )
+}
+
+#[doc(hidden)]
+/// Creates a route for a single static asset
+pub fn static_method_router(
+    content_type: &'static str,
+    etag: &'static str,
+    body: &'static [u8],
+    body_gz: Option<&'static [u8]>,
+    body_zst: Option<&'static [u8]>,
+) -> MethodRouter {
+    MethodRouter::get(
+        MethodRouter::new(),
+        move |accept_encoding: AcceptEncoding, if_none_match: IfNoneMatch| async move {
+            static_inner(
+                content_type,
+                etag,
+                body,
+                body_gz,
+                body_zst,
+                accept_encoding,
+                &if_none_match,
+            )
+        },
+    )
+}
+
+fn static_inner(
+    content_type: &'static str,
+    etag: &'static str,
+    body: &'static [u8],
+    body_gz: Option<&'static [u8]>,
+    body_zst: Option<&'static [u8]>,
+    accept_encoding: AcceptEncoding,
+    if_none_match: &IfNoneMatch,
+) -> impl IntoResponse {
+    let headers_base = [
+        (CONTENT_TYPE, HeaderValue::from_static(content_type)),
+        (ETAG, HeaderValue::from_static(etag)),
+        (
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ),
+        (VARY, HeaderValue::from_static("Accept-Encoding")),
+    ];
+
+    match (
+        if_none_match.matches(etag),
+        accept_encoding.gzip,
+        accept_encoding.zstd,
+        body_gz,
+        body_zst,
+    ) {
+        (true, _, _, _, _) => (headers_base, StatusCode::NOT_MODIFIED).into_response(),
+        (false, _, true, _, Some(body_zst)) => (
+            headers_base,
+            [(CONTENT_ENCODING, HeaderValue::from_static("zstd"))],
+            Bytes::from_static(body_zst),
+        )
+            .into_response(),
+        (false, true, _, Some(body_gz), _) => (
+            headers_base,
+            [(CONTENT_ENCODING, HeaderValue::from_static("gzip"))],
+            Bytes::from_static(body_gz),
+        )
+            .into_response(),
+        _ => (headers_base, Bytes::from_static(body)).into_response(),
+    }
 }
