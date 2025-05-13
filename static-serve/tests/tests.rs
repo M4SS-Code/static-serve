@@ -233,7 +233,7 @@ async fn router_created_ignore_dirs_one() {
 async fn router_created_ignore_dirs_three() {
     embed_assets!(
         "../static-serve/test_assets",
-        ignore_dirs = ["big", "small", "dist"]
+        ignore_dirs = ["big", "small", "dist", "with_html"]
     );
     let router: Router<()> = static_router();
     // all directories ignored, so router has no routes
@@ -338,5 +338,94 @@ async fn handles_conditional_requests_different_etag() {
 
     // Expect the compressed version
     let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn strips_html_correctly() {
+    embed_assets!(
+        "../static-serve/test_assets/with_html",
+        compress = false,
+        strip_html_ext = true
+    );
+    let router: Router<()> = static_router();
+    assert!(router.has_routes());
+
+    // Test `index.html`
+    let request = create_request("/", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index.html");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    // Test `.htm`
+    let request = create_request("/index2", &Compression::None);
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index2.htm");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn doesnt_strip_html_when_strip_html_false() {
+    embed_assets!(
+        "../static-serve/test_assets/with_html",
+        compress = false,
+        strip_html_ext = false
+    );
+    let router: Router<()> = static_router();
+    assert!(router.has_routes());
+
+    // Requesting `/index` with no extension fails
+    let request = create_request("/index", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, _body) = response.into_parts();
+    assert!(!parts.status.is_success());
+
+    // Requesting `/index.html` succeeds
+    let request = create_request("/index.html", &Compression::None);
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index.html");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn doesnt_strip_html_when_not_specified() {
+    embed_assets!("../static-serve/test_assets/with_html", compress = false);
+    let router: Router<()> = static_router();
+    assert!(router.has_routes());
+
+    // Requesting `/index` with no extension fails
+    let request = create_request("/index", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, _body) = response.into_parts();
+    assert!(!parts.status.is_success());
+
+    // Requesting `/index.html` succeeds
+    let request = create_request("/index.html", &Compression::None);
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index.html");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
