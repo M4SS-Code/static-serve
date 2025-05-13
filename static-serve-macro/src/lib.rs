@@ -35,6 +35,7 @@ struct EmbedAssets {
     assets_dir: AssetsDir,
     validated_ignore_dirs: IgnoreDirs,
     should_compress: ShouldCompress,
+    should_strip_html_ext: ShouldStripHtmlExt,
 }
 
 impl Parse for EmbedAssets {
@@ -44,6 +45,7 @@ impl Parse for EmbedAssets {
         // Default to no compression
         let mut maybe_should_compress = None;
         let mut maybe_ignore_dirs = None;
+        let mut maybe_should_strip_html_ext = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -59,10 +61,14 @@ impl Parse for EmbedAssets {
                     let value = input.parse()?;
                     maybe_ignore_dirs = Some(value);
                 }
+                "strip_html_ext" => {
+                    let value = input.parse()?;
+                    maybe_should_strip_html_ext = Some(value);
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress` or `ignore_dirs`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_dirs`, or `strip_html_ext`",
                     ));
                 }
             }
@@ -75,6 +81,13 @@ impl Parse for EmbedAssets {
             })
         });
 
+        let should_strip_html_ext = maybe_should_strip_html_ext.unwrap_or_else(|| {
+            ShouldStripHtmlExt(LitBool {
+                value: false,
+                span: Span::call_site(),
+            })
+        });
+
         let ignore_dirs_with_span = maybe_ignore_dirs.unwrap_or(IgnoreDirsWithSpan(vec![]));
         let validated_ignore_dirs = validate_ignore_dirs(ignore_dirs_with_span, &assets_dir.0)?;
 
@@ -82,6 +95,7 @@ impl Parse for EmbedAssets {
             assets_dir,
             validated_ignore_dirs,
             should_compress,
+            should_strip_html_ext,
         })
     }
 }
@@ -91,8 +105,14 @@ impl ToTokens for EmbedAssets {
         let AssetsDir(assets_dir) = &self.assets_dir;
         let ignore_dirs = &self.validated_ignore_dirs;
         let ShouldCompress(should_compress) = &self.should_compress;
+        let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
 
-        let result = generate_static_routes(assets_dir, ignore_dirs, should_compress);
+        let result = generate_static_routes(
+            assets_dir,
+            ignore_dirs,
+            should_compress,
+            should_strip_html_ext,
+        );
 
         match result {
             Ok(value) => {
@@ -216,10 +236,20 @@ impl Parse for ShouldCompress {
     }
 }
 
+struct ShouldStripHtmlExt(LitBool);
+
+impl Parse for ShouldStripHtmlExt {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let lit = input.parse()?;
+        Ok(ShouldStripHtmlExt(lit))
+    }
+}
+
 fn generate_static_routes(
     assets_dir: &LitStr,
     ignore_dirs: &IgnoreDirs,
     should_compress: &LitBool,
+    should_strip_html_ext: &LitBool,
 ) -> Result<TokenStream, error::Error> {
     let assets_dir_abs = Path::new(&assets_dir.value())
         .canonicalize()
@@ -261,12 +291,14 @@ fn generate_static_routes(
         };
 
         // Create parameters for `::static_serve::static_route()`
-        let entry_path = entry
-            .to_str()
-            .ok_or(Error::InvalidUnicodeInEntryName)?
+        let mut entry_path = entry.to_str().ok_or(Error::InvalidUnicodeInEntryName)?;
+        let content_type = file_content_type(&entry)?;
+        if should_strip_html_ext.value && content_type == "text/html" {
+            entry_path = strip_html_ext(&entry)?;
+        }
+        entry_path = entry_path
             .strip_prefix(assets_dir_abs_str)
             .unwrap_or_default();
-        let content_type = file_content_type(&entry)?;
         let etag_str = etag(&contents);
         let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
         let maybe_gzip = option_to_token_stream_option(maybe_gzip.as_ref());
@@ -387,4 +419,23 @@ fn etag(contents: &[u8]) -> String {
     let hash = u64::from_le_bytes(sha256[..8].try_into().unwrap())
         ^ u64::from_le_bytes(sha256[8..16].try_into().unwrap());
     format!("\"{hash:016x}\"")
+}
+
+fn strip_html_ext(entry: &Path) -> Result<&str, Error> {
+    let entry_str = entry.to_str().ok_or(Error::InvalidUnicodeInEntryName)?;
+    let mut output = entry_str;
+
+    // Strip the extension
+    if let Some(prefix) = output.strip_suffix(".html") {
+        output = prefix;
+    } else if let Some(prefix) = output.strip_suffix(".htm") {
+        output = prefix;
+    }
+
+    // If it was `/index.html` on `/index.htm`, also remove `index`
+    if output.ends_with("/index") {
+        output = output.strip_suffix("index").unwrap_or("/");
+    }
+
+    Ok(output)
 }
