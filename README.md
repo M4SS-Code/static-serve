@@ -24,7 +24,7 @@ axum = "0.8"
 
 ## Usage
 
-### Embedding Static Assets
+### Embedding a directory of static assets
 
 Use the `embed_assets!` macro to create a `static_router()` function in scope which will include your static files, embedding them into your binary:
 
@@ -41,18 +41,11 @@ This will:
 - Compress them using `gzip` and `zstd` (if beneficial)
 - Generate a `static_router()` function to serve these assets
 
-### Conditional Requests & Caching
-
-The crate automatically handles:
-
-- `Accept-Encoding` header to serve compressed versions if available
-- `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged
-
-### Required parameter
+#### Required parameter
 
 - `path_to_dir` - a valid `&str` string literal of the path to the static files to be included
 
-### Optional parameters
+#### Optional parameters
 
 - `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
 
@@ -60,18 +53,54 @@ The crate automatically handles:
 
 - `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, leaving just the root (defaults to false)
 
+### Embedding a single static asset file
+
+Use the `embed_asset!` macro to return a function you can use as a GET handler, which will include your static file, embedded into your binary:
+
+```rust
+use static_serve::embed_assets;
+
+let router: Router<()> = Router::new();
+let handler = embed_asset!("assets/my_file.png", compress = true);
+let router = router.route("/my_file.png", handler);
+
+```
+
+This will:
+
+- Include the file `my_file.png` from the `assets` directory
+- Compress it using `gzip` and `zstd` (if beneficial)
+- Generate a `MethodRouter` "handler" you can add as a route on your router to serve the file
+
+#### Required parameter
+
+- `path_to_file` - a valid `&str` string literal of the path to the static file to be included
+
+#### Optional parameter
+
+- `compress = false` - compress a static file with zstd and gzip, true or false (defaults to false)
+
+## Conditional Requests & Caching
+
+The crate automatically handles:
+
+- `Accept-Encoding` header to serve compressed versions if available
+- `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged
+
 ## Example
 
 ```rust
-
 use axum::{Router, Server};
-use static_serve::embed_assets;
+use static_serve::{embed_assets, embed_asset};
 
 embed_assets!("public", compress = true);
 
 #[tokio::main]
 async fn main() {
     let router = static_router();
+    let my_file_handler = embed_asset!("other_files/my_file.txt");
+    let router = router.route("/other_files/my_file.txt", my_file_handler);
+
     Server::bind(&"0.0.0.0:3000".parse().unwrap())
         .serve(router.into_make_service())
         .await
