@@ -44,6 +44,7 @@ This will:
 ### Conditional Requests & Caching
 
 The crate automatically handles:
+
 - `Accept-Encoding` header to serve compressed versions if available
 - `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged
 
@@ -56,6 +57,8 @@ The crate automatically handles:
 - `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
 
 - `ignore_dirs = [my_ignore_dir, other_ignore_dir]` - a bracketed list of `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
+
+- `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, leaving just the root (defaults to false)
 
 ## Example
 
@@ -79,6 +82,7 @@ async fn main() {
 ## License
 
 Licensed under either of
+
 - Apache License, Version 2.0, (LICENSE-APACHE or [https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0))
 - MIT license (LICENSE-MIT or [https://opensource.org/licenses/MIT](https://opensource.org/licenses/MIT))
 

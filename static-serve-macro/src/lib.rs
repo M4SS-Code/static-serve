@@ -432,7 +432,7 @@ fn strip_html_ext(entry: &Path) -> Result<&str, Error> {
         output = prefix;
     }
 
-    // If it was `/index.html` on `/index.htm`, also remove `index`
+    // If it was `/index.html` or `/index.htm`, also remove `index`
     if output.ends_with("/index") {
         output = output.strip_suffix("index").unwrap_or("/");
     }
