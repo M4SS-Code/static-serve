@@ -31,7 +31,7 @@ Use the `embed_assets!` macro to create a `static_router()` function in scope wh
 ```rust
 use static_serve::embed_assets;
 
-embed_assets!("assets", compress = true);
+embed_assets!("assets", compress = true, cache_busted_paths = ["immutable"]);
 let router = static_router();
 ```
 
@@ -39,6 +39,7 @@ This will:
 
 - Include all files from the `assets` directory
 - Compress them using `gzip` and `zstd` (if beneficial)
+- For only files in `assets/immutable`, add a `Cache-Control` header with `public, max-age=31536000, immutable` (since these are marked as cache-busted paths)
 - Generate a `static_router()` function to serve these assets
 
 #### Required parameter
@@ -49,9 +50,11 @@ This will:
 
 - `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
 
-- `ignore_dirs = [my_ignore_dir, other_ignore_dir]` - a bracketed list of `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
+- `ignore_dirs = ["my_ignore_dir", "other_ignore_dir"]` - a bracketed list of `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
 
 - `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, leaving just the root (defaults to false)
+
+- `cache_busted_paths = ["my_immutables_dir", "my_immutable_file"]` - a bracketed list of `&str`s of the subdirectories and/or single files which should gain the `Cache-Control` header with `public, max-age=31536000, immutable` for cache-busted paths. If this parameter is missing, the default is that no embedded files will have the `Cache-Control` header. Note: the files in `cache_busted_paths` need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header. 
 
 ### Embedding a single static asset file
 
@@ -61,7 +64,7 @@ Use the `embed_asset!` macro to return a function you can use as a GET handler, 
 use static_serve::embed_assets;
 
 let router: Router<()> = Router::new();
-let handler = embed_asset!("assets/my_file.png", compress = true);
+let handler = embed_asset!("assets/my_file.png", compress = true, cache_bust = true);
 let router = router.route("/my_file.png", handler);
 
 ```
@@ -70,15 +73,17 @@ This will:
 
 - Include the file `my_file.png` from the `assets` directory
 - Compress it using `gzip` and `zstd` (if beneficial)
+- Add a `Cache-Control` header with the value `public, max-age=31536000, immutable` for cache-busted paths. Note: the file in `embed_asset!` needs to already be compatible with cache-busting by having a hash in its file path (for example). All `static-serve` does is set the appropriate header. 
 - Generate a `MethodRouter` "handler" you can add as a route on your router to serve the file
 
 #### Required parameter
 
 - `path_to_file` - a valid `&str` string literal of the path to the static file to be included
 
-#### Optional parameter
+#### Optional parameters
 
 - `compress = false` - compress a static file with zstd and gzip, true or false (defaults to false)
+- `cache_bust = false` - add a `Cache-Control` header with the value `public, max-age=31536000, immutable` for a cache-busted asset (defaults to false)
 
 ## Conditional Requests & Caching
 
@@ -86,6 +91,8 @@ The crate automatically handles:
 
 - `Accept-Encoding` header to serve compressed versions if available
 - `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged
+
+- With the optional cache-bust headers feature, each embedded file in the `cache_busted_paths` array (or single file in the case of `embed_asset!` with `cache_bust = true`) will be returned with a `Cache-Control` header with the value `public, max-age=31536000, immutable`. Note: the files involved need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header.
 
 ## Example
 
