@@ -489,9 +489,13 @@ async fn handles_one_file_compressed_zstd() {
 }
 
 #[tokio::test]
-async fn handles_one_file_same_etag() {
+async fn handles_one_file_same_etag_with_cache_control() {
     let router: Router<()> = Router::new();
-    let handler = embed_asset!("../static-serve/test_assets/big/app.js", compress = true);
+    let handler = embed_asset!(
+        "../static-serve/test_assets/big/app.js",
+        compress = true,
+        cache_bust = true
+    );
     let router = router.route("/app.js", handler);
     assert!(router.has_routes());
 
@@ -540,14 +544,26 @@ async fn handles_one_file_same_etag() {
             .expect("no content-length header!"),
         "0"
     );
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
+
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     assert!(collected_body_bytes.is_empty());
 }
 
 #[tokio::test]
-async fn handles_one_file_different_etag() {
+async fn handles_one_file_different_etag_with_cache_control() {
     let router: Router<()> = Router::new();
-    let handler = embed_asset!("../static-serve/test_assets/big/app.js", compress = true);
+    let handler = embed_asset!(
+        "../static-serve/test_assets/big/app.js",
+        compress = true,
+        cache_bust = true
+    );
     let router = router.route("/app.js", handler);
     assert!(router.has_routes());
 
@@ -562,6 +578,13 @@ async fn handles_one_file_different_etag() {
         "text/javascript"
     );
     assert!(parts.headers.contains_key("etag"));
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
 
@@ -593,6 +616,138 @@ async fn handles_one_file_different_etag() {
         "0",
         "content length is unexpectedly zero!"
     );
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    assert!(!collected_body_bytes.is_empty());
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_one_file_same_etag_no_cache_control() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!(
+        "../static-serve/test_assets/big/app.js",
+        compress = true,
+        cache_bust = false
+    );
+    let router = router.route("/app.js", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/app.js", &Compression::Zstd);
+
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+    let etag = parts
+        .headers
+        .get("etag")
+        .expect("no etag header when there should be one!");
+    assert!(parts.headers.get("cache-control").is_none());
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_NONE_MATCH, etag)
+        .header(ACCEPT_ENCODING, "zstd")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        parts
+            .headers
+            .get("content-length")
+            .expect("no content-length header!"),
+        "0"
+    );
+    assert!(parts.headers.get("cache-control").is_none());
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    assert!(collected_body_bytes.is_empty());
+}
+
+#[tokio::test]
+async fn handles_one_file_different_etag_no_cache_control() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!(
+        "../static-serve/test_assets/big/app.js",
+        compress = true,
+        cache_bust = false
+    );
+    let router = router.route("/app.js", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/app.js", &Compression::Zstd);
+
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+    assert!(parts.headers.get("cache-control").is_none());
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_NONE_MATCH, "n0t4r34l3t4g")
+        .header(ACCEPT_ENCODING, "zstd")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::OK);
+    assert_ne!(
+        parts
+            .headers
+            .get("content-length")
+            .expect("no content-length header!"),
+        "0",
+        "content length is unexpectedly zero!"
+    );
+    assert!(parts.headers.get("cache-control").is_none());
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     assert!(!collected_body_bytes.is_empty());
@@ -655,5 +810,272 @@ async fn using_both_macros_together_works() {
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     let expected_body_bytes =
         include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_one_file_with_cache_control() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!(
+        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        compress = true,
+        cache_bust = true
+    );
+    let router = router.route("/ignore", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/ignore", &Compression::None);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes =
+        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_one_file_with_cache_control_denied() {
+    let router: Router<()> = Router::new();
+    let handler = embed_asset!(
+        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        compress = true,
+        cache_bust = false
+    );
+    let router = router.route("/ignore", handler);
+    assert!(router.has_routes());
+
+    let request = create_request("/ignore", &Compression::None);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert!(parts.headers.get("cache-control").is_none());
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes =
+        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn using_both_macros_with_cache_busting_works() {
+    embed_assets!(
+        "../static-serve/test_assets/big",
+        compress = true,
+        cache_busted_paths = ["immutable"]
+    );
+    let router: Router<()> = static_router();
+    let handler = embed_asset!(
+        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        cache_bust = true
+    );
+    let router = router.route("/ignore", handler);
+
+    // Get /big/app.js (created by `embed_assets!`, not cache-busted)
+    let request = create_request("/app.js", &Compression::Zstd);
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get(CONTENT_ENCODING),
+        Some(&HeaderValue::from_str("zstd").unwrap())
+    );
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+    assert!(parts.headers.get("cache-control").is_none());
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    // Get /big/immutable/app.js (created by `embed_assets!`, cache-busted)
+    let request = create_request("/immutable/app.js", &Compression::Zstd);
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get(CONTENT_ENCODING),
+        Some(&HeaderValue::from_str("zstd").unwrap())
+    );
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.contains_key("etag"));
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+
+    // Decompress the response body
+    let decompressed_body = decompress_zstd(&collected_body_bytes);
+    assert_eq!(
+        decompressed_body,
+        include_bytes!("../../test_assets/big/immutable/app.js")
+    );
+
+    // Expect the compressed version
+    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    // Get `ignore_me_plz.txt` (mapped to `/ignore`, created by `embed_asset!`)
+    let request = create_request("/ignore", &Compression::None);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes =
+        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_dir_with_cache_control_on_single_file() {
+    embed_assets!(
+        "../static-serve/test_assets/small",
+        compress = true,
+        cache_busted_paths = ["styles.css"]
+    );
+    let router = static_router();
+    assert!(router.has_routes());
+
+    // styles.css should be immutable / cache-busted
+    let request = create_request("/styles.css", &Compression::None);
+
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/css");
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/styles.css");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    // app.js should not be immutable / cache-busted
+    let request = create_request("/app.js", &Compression::None);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts.headers.get("cache-control").is_none());
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/app.js");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+}
+
+#[tokio::test]
+async fn handles_dir_with_cache_control_on_filename_and_dir() {
+    embed_assets!(
+        "../static-serve/test_assets/small",
+        compress = true,
+        cache_busted_paths = [".", "styles.css"]
+    );
+    let router = static_router();
+    assert!(router.has_routes());
+
+    // styles.css should be immutable / cache-busted
+    let request = create_request("/styles.css", &Compression::None);
+
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(parts.headers.get("content-type").unwrap(), "text/css");
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/styles.css");
+    assert_eq!(*collected_body_bytes, *expected_body_bytes);
+
+    // app.js should be immutable / cache-busted, too
+    let request = create_request("/app.js", &Compression::None);
+
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert!(parts
+        .headers
+        .get("cache-control")
+        .expect("cache-control header should exist")
+        .to_str()
+        .expect("should make cache-control header into str")
+        .contains("immutable"));
+    assert!(parts.headers.contains_key("etag"));
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/app.js");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
