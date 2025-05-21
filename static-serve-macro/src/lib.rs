@@ -40,6 +40,7 @@ pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 struct EmbedAsset {
     asset_file: AssetFile,
     should_compress: ShouldCompress,
+    cache_busted: IsCacheBusted,
 }
 
 struct AssetFile(LitStr);
@@ -48,29 +49,42 @@ impl Parse for EmbedAsset {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let asset_file: AssetFile = input.parse()?;
 
-        // Default to no compression
+        // Default to no compression, no cache-busting
         let mut maybe_should_compress = None;
+        let mut maybe_is_cache_busted = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
-            if matches!(key.to_string().as_str(), "compress") {
-                let value = input.parse()?;
-                maybe_should_compress = Some(value);
-            } else {
-                return Err(syn::Error::new(
+            match key.to_string().as_str() {
+                "compress" => {
+                    let value = input.parse()?;
+                    maybe_should_compress = Some(value);
+                }
+                "cache_bust" => {
+                    let value = input.parse()?;
+                    maybe_is_cache_busted = Some(value);
+                }
+                _ => {
+                    return Err(syn::Error::new(
                     key.span(),
                     format!(
-                        "Unknown key in `embed_asset!` macro. Expected `compress` but got {key}"
+                        "Unknown key in `embed_asset!` macro. Expected `compress` or `cache_bust` but got {key}"
                     ),
                 ));
+                }
             }
         }
-
         let should_compress = maybe_should_compress.unwrap_or_else(|| {
             ShouldCompress(LitBool {
+                value: false,
+                span: Span::call_site(),
+            })
+        });
+        let cache_busted = maybe_is_cache_busted.unwrap_or_else(|| {
+            IsCacheBusted(LitBool {
                 value: false,
                 span: Span::call_site(),
             })
@@ -79,6 +93,7 @@ impl Parse for EmbedAsset {
         Ok(Self {
             asset_file,
             should_compress,
+            cache_busted,
         })
     }
 }
@@ -120,8 +135,9 @@ impl ToTokens for EmbedAsset {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let AssetFile(asset_file) = &self.asset_file;
         let ShouldCompress(should_compress) = &self.should_compress;
+        let IsCacheBusted(cache_busted) = &self.cache_busted;
 
-        let result = generate_static_handler(asset_file, should_compress);
+        let result = generate_static_handler(asset_file, should_compress, cache_busted);
 
         match result {
             Ok(value) => {
@@ -142,6 +158,7 @@ struct EmbedAssets {
     validated_ignore_dirs: IgnoreDirs,
     should_compress: ShouldCompress,
     should_strip_html_ext: ShouldStripHtmlExt,
+    cache_busted_paths: CacheBustedPaths,
 }
 
 impl Parse for EmbedAssets {
@@ -152,6 +169,7 @@ impl Parse for EmbedAssets {
         let mut maybe_should_compress = None;
         let mut maybe_ignore_dirs = None;
         let mut maybe_should_strip_html_ext = None;
+        let mut maybe_cache_busted_paths = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -171,10 +189,14 @@ impl Parse for EmbedAssets {
                     let value = input.parse()?;
                     maybe_should_strip_html_ext = Some(value);
                 }
+                "cache_busted_paths" => {
+                    let value = input.parse()?;
+                    maybe_cache_busted_paths = Some(value);
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_dirs`, or `strip_html_ext`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_dirs`, `strip_html_ext`, or `cache_busted_paths`",
                     ));
                 }
             }
@@ -197,11 +219,17 @@ impl Parse for EmbedAssets {
         let ignore_dirs_with_span = maybe_ignore_dirs.unwrap_or(IgnoreDirsWithSpan(vec![]));
         let validated_ignore_dirs = validate_ignore_dirs(ignore_dirs_with_span, &assets_dir.0)?;
 
+        let maybe_cache_busted_paths =
+            maybe_cache_busted_paths.unwrap_or(CacheBustedPathsWithSpan(vec![]));
+        let cache_busted_paths =
+            validate_cache_busted_paths(maybe_cache_busted_paths, &assets_dir.0)?;
+
         Ok(Self {
             assets_dir,
             validated_ignore_dirs,
             should_compress,
             should_strip_html_ext,
+            cache_busted_paths,
         })
     }
 }
@@ -212,12 +240,14 @@ impl ToTokens for EmbedAssets {
         let ignore_dirs = &self.validated_ignore_dirs;
         let ShouldCompress(should_compress) = &self.should_compress;
         let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
+        let cache_busted_paths = &self.cache_busted_paths;
 
         let result = generate_static_routes(
             assets_dir,
             ignore_dirs,
             should_compress,
             should_strip_html_ext,
+            cache_busted_paths,
         );
 
         match result {
@@ -278,20 +308,7 @@ struct IgnoreDirsWithSpan(Vec<(PathBuf, Span)>);
 
 impl Parse for IgnoreDirsWithSpan {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let inner_content;
-        bracketed!(inner_content in input);
-
-        let mut dirs = Vec::new();
-        while !inner_content.is_empty() {
-            let directory_span = inner_content.span();
-            let directory_str = inner_content.parse::<LitStr>()?;
-            let path = PathBuf::from(directory_str.value());
-            dirs.push((path, directory_span));
-
-            if !inner_content.is_empty() {
-                inner_content.parse::<Token![,]>()?;
-            }
-        }
+        let dirs = parse_dirs(input)?;
 
         Ok(IgnoreDirsWithSpan(dirs))
     }
@@ -351,11 +368,94 @@ impl Parse for ShouldStripHtmlExt {
     }
 }
 
+struct IsCacheBusted(LitBool);
+
+impl Parse for IsCacheBusted {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let lit = input.parse()?;
+        Ok(IsCacheBusted(lit))
+    }
+}
+
+struct CacheBustedPaths {
+    dirs: Vec<PathBuf>,
+    files: Vec<PathBuf>,
+}
+struct CacheBustedPathsWithSpan(Vec<(PathBuf, Span)>);
+
+impl Parse for CacheBustedPathsWithSpan {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let dirs = parse_dirs(input)?;
+        Ok(CacheBustedPathsWithSpan(dirs))
+    }
+}
+
+fn validate_cache_busted_paths(
+    tuples: CacheBustedPathsWithSpan,
+    assets_dir: &LitStr,
+) -> syn::Result<CacheBustedPaths> {
+    let mut valid_dirs = Vec::new();
+    let mut valid_files = Vec::new();
+    for (dir, span) in tuples.0 {
+        let full_path = PathBuf::from(assets_dir.value()).join(&dir);
+        match fs::metadata(&full_path) {
+            Ok(meta) => {
+                if meta.is_dir() {
+                    valid_dirs.push(full_path);
+                } else {
+                    valid_files.push(full_path);
+                }
+            }
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
+                return Err(syn::Error::new(
+                    span,
+                    "The specified directory for cache busting does not exist",
+                ))
+            }
+            Err(e) => {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "Error reading path {}: {}",
+                        dir.to_string_lossy(),
+                        DisplayFullError(&e)
+                    ),
+                ))
+            }
+        }
+    }
+    Ok(CacheBustedPaths {
+        dirs: valid_dirs,
+        files: valid_files,
+    })
+}
+
+/// Helper function for turning an array of strs representing paths into
+/// a `Vec` containing tuples of each `PathBuf` and its `Span` in the `ParseStream`
+fn parse_dirs(input: ParseStream) -> syn::Result<Vec<(PathBuf, Span)>> {
+    let inner_content;
+    bracketed!(inner_content in input);
+
+    let mut dirs = Vec::new();
+    while !inner_content.is_empty() {
+        let directory_span = inner_content.span();
+        let directory_str = inner_content.parse::<LitStr>()?;
+        let path = PathBuf::from(directory_str.value());
+        dirs.push((path, directory_span));
+
+        if !inner_content.is_empty() {
+            inner_content.parse::<Token![,]>()?;
+        }
+    }
+    Ok(dirs)
+}
+
 fn generate_static_routes(
     assets_dir: &LitStr,
     ignore_dirs: &IgnoreDirs,
     should_compress: &LitBool,
     should_strip_html_ext: &LitBool,
+    cache_busted_paths: &CacheBustedPaths,
 ) -> Result<TokenStream, error::Error> {
     let assets_dir_abs = Path::new(&assets_dir.value())
         .canonicalize()
@@ -367,6 +467,19 @@ fn generate_static_routes(
         .0
         .iter()
         .map(|d| d.canonicalize().map_err(Error::CannotCanonicalizeIgnoreDir))
+        .collect::<Result<Vec<_>, _>>()?;
+    let canon_cache_busted_dirs = cache_busted_paths
+        .dirs
+        .iter()
+        .map(|d| {
+            d.canonicalize()
+                .map_err(Error::CannotCanonicalizeCacheBustedDir)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let canon_cache_busted_files = cache_busted_paths
+        .files
+        .iter()
+        .map(|file| file.canonicalize().map_err(Error::CannotCanonicalizeFile))
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut routes = Vec::new();
@@ -385,6 +498,15 @@ fn generate_static_routes(
             continue;
         }
 
+        let mut is_entry_cache_busted = false;
+        if canon_cache_busted_dirs
+            .iter()
+            .any(|dir| entry.starts_with(dir))
+            || canon_cache_busted_files.contains(&entry)
+        {
+            is_entry_cache_busted = true;
+        }
+
         let entry = entry
             .canonicalize()
             .map_err(Error::CannotCanonicalizeFile)?;
@@ -396,11 +518,13 @@ fn generate_static_routes(
             lit_byte_str_contents,
             maybe_gzip,
             maybe_zstd,
+            cache_busted,
         } = EmbeddedFileInfo::from_path(
             &entry,
             Some(assets_dir_abs_str),
             should_compress,
             should_strip_html_ext,
+            is_entry_cache_busted,
         )?;
 
         routes.push(quote! {
@@ -413,10 +537,11 @@ fn generate_static_routes(
                     // Poor man's `tracked_path`
                     // https://github.com/rust-lang/rust/issues/99515
                     const _: &[u8] = include_bytes!(#entry_str);
-                    #lit_byte_str_contents
+                        #lit_byte_str_contents
                 },
                 #maybe_gzip,
                 #maybe_zstd,
+                #cache_busted
             );
         });
     }
@@ -434,6 +559,7 @@ fn generate_static_routes(
 fn generate_static_handler(
     asset_file: &LitStr,
     should_compress: &LitBool,
+    cache_busted: &LitBool,
 ) -> Result<TokenStream, error::Error> {
     let asset_file_abs = Path::new(&asset_file.value())
         .canonicalize()
@@ -447,6 +573,7 @@ fn generate_static_handler(
         lit_byte_str_contents,
         maybe_gzip,
         maybe_zstd,
+        cache_busted,
     } = EmbeddedFileInfo::from_path(
         &asset_file_abs,
         None,
@@ -455,6 +582,7 @@ fn generate_static_handler(
             value: false,
             span: Span::call_site(),
         },
+        cache_busted.value(),
     )?;
 
     let route = quote! {
@@ -469,6 +597,7 @@ fn generate_static_handler(
             },
             #maybe_gzip,
             #maybe_zstd,
+            #cache_busted
         )
     };
 
@@ -496,6 +625,7 @@ struct EmbeddedFileInfo<'a> {
     lit_byte_str_contents: LitByteStr,
     maybe_gzip: OptionBytesSlice,
     maybe_zstd: OptionBytesSlice,
+    cache_busted: bool,
 }
 
 impl<'a> EmbeddedFileInfo<'a> {
@@ -504,6 +634,7 @@ impl<'a> EmbeddedFileInfo<'a> {
         assets_dir_abs_str: Option<&str>,
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
+        cache_busted: bool,
     ) -> Result<Self, Error> {
         let contents = fs::read(pathbuf).map_err(Error::CannotReadEntryContents)?;
 
@@ -548,6 +679,7 @@ impl<'a> EmbeddedFileInfo<'a> {
             lit_byte_str_contents,
             maybe_gzip,
             maybe_zstd,
+            cache_busted,
         })
     }
 }

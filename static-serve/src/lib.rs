@@ -74,6 +74,7 @@ where
 }
 
 #[doc(hidden)]
+#[expect(clippy::too_many_arguments)]
 /// The router for adding routes for static assets
 pub fn static_route<S>(
     router: Router<S>,
@@ -83,6 +84,7 @@ pub fn static_route<S>(
     body: &'static [u8],
     body_gz: Option<&'static [u8]>,
     body_zst: Option<&'static [u8]>,
+    cache_busted: bool,
 ) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -91,84 +93,116 @@ where
         web_path,
         get(
             move |accept_encoding: AcceptEncoding, if_none_match: IfNoneMatch| async move {
-                static_inner(
+                static_inner(StaticInnerData {
                     content_type,
                     etag,
                     body,
                     body_gz,
                     body_zst,
+                    cache_busted,
                     accept_encoding,
-                    &if_none_match,
-                )
+                    if_none_match,
+                })
             },
         ),
     )
 }
 
 #[doc(hidden)]
-/// Creates a route for a single static asset
+/// Creates a route for a single static asset.
+///
+/// Used by the `embed_asset!` macro, so it needs to be `pub`.
 pub fn static_method_router(
     content_type: &'static str,
     etag: &'static str,
     body: &'static [u8],
     body_gz: Option<&'static [u8]>,
     body_zst: Option<&'static [u8]>,
+    cache_busted: bool,
 ) -> MethodRouter {
     MethodRouter::get(
         MethodRouter::new(),
         move |accept_encoding: AcceptEncoding, if_none_match: IfNoneMatch| async move {
-            static_inner(
+            static_inner(StaticInnerData {
                 content_type,
                 etag,
                 body,
                 body_gz,
                 body_zst,
+                cache_busted,
                 accept_encoding,
-                &if_none_match,
-            )
+                if_none_match,
+            })
         },
     )
 }
 
-fn static_inner(
+/// Struct of parameters for `static_inner` (to avoid `clippy::too_many_arguments`)
+///
+/// This differs from `StaticRouteData` because it
+/// includes the `AcceptEncoding` and `IfNoneMatch` fields
+/// and excludes the `web_path`
+struct StaticInnerData {
     content_type: &'static str,
     etag: &'static str,
     body: &'static [u8],
     body_gz: Option<&'static [u8]>,
     body_zst: Option<&'static [u8]>,
+    cache_busted: bool,
     accept_encoding: AcceptEncoding,
-    if_none_match: &IfNoneMatch,
-) -> impl IntoResponse {
-    let headers_base = [
-        (CONTENT_TYPE, HeaderValue::from_static(content_type)),
-        (ETAG, HeaderValue::from_static(etag)),
-        (
-            CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=31536000, immutable"),
-        ),
-        (VARY, HeaderValue::from_static("Accept-Encoding")),
-    ];
+    if_none_match: IfNoneMatch,
+}
 
-    match (
-        if_none_match.matches(etag),
-        accept_encoding.gzip,
-        accept_encoding.zstd,
+fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
+    let StaticInnerData {
+        content_type,
+        etag,
+        body,
         body_gz,
         body_zst,
+        cache_busted,
+        accept_encoding,
+        if_none_match,
+    } = static_inner_data;
+
+    let optional_cache_control = if cache_busted {
+        Some([(
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        )])
+    } else {
+        None
+    };
+
+    let resp_base = (
+        [
+            (CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (ETAG, HeaderValue::from_static(etag)),
+            (VARY, HeaderValue::from_static("Accept-Encoding")),
+        ],
+        optional_cache_control,
+    );
+
+    if if_none_match.matches(etag) {
+        return (resp_base, StatusCode::NOT_MODIFIED).into_response();
+    }
+
+    match (
+        (accept_encoding.gzip, body_gz),
+        (accept_encoding.zstd, body_zst),
     ) {
-        (true, _, _, _, _) => (headers_base, StatusCode::NOT_MODIFIED).into_response(),
-        (false, _, true, _, Some(body_zst)) => (
-            headers_base,
+        (_, (true, Some(body_zst))) => (
+            resp_base,
             [(CONTENT_ENCODING, HeaderValue::from_static("zstd"))],
             Bytes::from_static(body_zst),
         )
             .into_response(),
-        (false, true, _, Some(body_gz), _) => (
-            headers_base,
+        ((true, Some(body_gz)), _) => (
+            resp_base,
             [(CONTENT_ENCODING, HeaderValue::from_static("gzip"))],
             Bytes::from_static(body_gz),
         )
             .into_response(),
-        _ => (headers_base, Bytes::from_static(body)).into_response(),
+        _ => (resp_base, Bytes::from_static(body)).into_response(),
     }
 }
