@@ -17,6 +17,8 @@ pub(crate) enum Error {
     CannotCanonicalizeDirectory(#[source] io::Error),
     #[error("Cannot canonicalize asset file")]
     CannotCanonicalizeFile(#[source] io::Error),
+    #[error("File path is not utf-8")]
+    FilePathIsNotUtf8,
     #[error("Invalid unicode in directory name")]
     InvalidUnicodeInDirectoryName,
     #[error("Cannot canonicalize ignore directory")]

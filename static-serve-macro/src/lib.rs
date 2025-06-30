@@ -385,6 +385,10 @@ fn generate_static_routes(
             continue;
         }
 
+        let entry = entry
+            .canonicalize()
+            .map_err(Error::CannotCanonicalizeFile)?;
+        let entry_str = entry.to_str().ok_or(Error::FilePathIsNotUtf8)?;
         let EmbeddedFileInfo {
             entry_path,
             content_type,
@@ -405,7 +409,12 @@ fn generate_static_routes(
                 #entry_path,
                 #content_type,
                 #etag_str,
-                #lit_byte_str_contents,
+                {
+                    // Poor man's `tracked_path`
+                    // https://github.com/rust-lang/rust/issues/99515
+                    const _: &[u8] = include_bytes!(#entry_str);
+                    #lit_byte_str_contents
+                },
                 #maybe_gzip,
                 #maybe_zstd,
             );
@@ -429,6 +438,7 @@ fn generate_static_handler(
     let asset_file_abs = Path::new(&asset_file.value())
         .canonicalize()
         .map_err(Error::CannotCanonicalizeFile)?;
+    let asset_file_abs_str = asset_file_abs.to_str().ok_or(Error::FilePathIsNotUtf8)?;
 
     let EmbeddedFileInfo {
         entry_path: _,
@@ -451,7 +461,12 @@ fn generate_static_handler(
         ::static_serve::static_method_router(
             #content_type,
             #etag_str,
-            #lit_byte_str_contents,
+            {
+                // Poor man's `tracked_path`
+                // https://github.com/rust-lang/rust/issues/99515
+                const _: &[u8] = include_bytes!(#asset_file_abs_str);
+                #lit_byte_str_contents
+            },
             #maybe_gzip,
             #maybe_zstd,
         )
