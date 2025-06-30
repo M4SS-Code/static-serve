@@ -15,6 +15,8 @@ pub(crate) enum Error {
     InvalidFileExtension(OsString),
     #[error("Cannot canonicalize assets directory")]
     CannotCanonicalizeDirectory(#[source] io::Error),
+    #[error("Cannot canonicalize asset file")]
+    CannotCanonicalizeFile(#[source] io::Error),
     #[error("Invalid unicode in directory name")]
     InvalidUnicodeInDirectoryName,
     #[error("Cannot canonicalize ignore directory")]
@@ -33,8 +35,6 @@ pub(crate) enum Error {
     Glob(#[source] GlobError),
     #[error("Cannot get entry metadata")]
     CannotGetMetadata(#[source] io::Error),
-    #[error("Cannot canonicalize asset file")]
-    CannotCanonicalizeFile(#[source] io::Error),
 }
 
 struct UnknownFileExtension<'a>(Option<&'a OsStr>);
