@@ -10,7 +10,7 @@ categories.workspace = true
 repository.workspace = true
 
 [dependencies]
-static-serve-macro = { path = "../static-serve-macro", version = "=0.2.3" }
+static-serve-macro = { path = "../static-serve-macro", version = "=0.3.0" }
 axum = { version = "0.8", default-features = false }
 bytes = "1.10"
 
