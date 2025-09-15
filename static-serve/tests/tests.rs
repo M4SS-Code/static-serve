@@ -1079,3 +1079,61 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
     let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/app.js");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
+
+#[tokio::test]
+async fn router_created_ignore_files() {
+    embed_assets!(
+        "../static-serve/test_assets/small",
+        ignore_files = ["app.js"]
+    );
+    let router: Router<()> = static_router();
+
+    // app.js should be ignored, but styles.css should be available
+    assert!(router.has_routes());
+
+    // Request for app.js should succeed
+    let request = create_request("/styles.css", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, _) = response.into_parts();
+    assert!(parts.status.is_success());
+
+    // Request for index.html should return 404 since it's ignored
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router, request).await;
+    let (parts, _) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn router_created_ignore_multiple_files() {
+    embed_assets!(
+        "../static-serve/test_assets/big",
+        ignore_files = ["app.js", "styles.css"]
+    );
+    let router: Router<()> = static_router();
+
+    // All files in /big should be ignored, but files in /big/immutable should still be available
+    assert!(router.has_routes());
+
+    // Request for ignored files should return 404
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, _) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::NOT_FOUND);
+
+    let request = create_request("/styles.css", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, _) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::NOT_FOUND);
+
+    // Request for files in subdirectory should succeed
+    let request = create_request("/immutable/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, _) = response.into_parts();
+    assert!(parts.status.is_success());
+
+    let request = create_request("/immutable/styles.css", &Compression::None);
+    let response = get_response(router, request).await;
+    let (parts, _) = response.into_parts();
+    assert!(parts.status.is_success());
+}

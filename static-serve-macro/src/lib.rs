@@ -156,6 +156,7 @@ impl ToTokens for EmbedAsset {
 struct EmbedAssets {
     assets_dir: AssetsDir,
     validated_ignore_dirs: IgnoreDirs,
+    validated_ignore_files: IgnoreFiles,
     should_compress: ShouldCompress,
     should_strip_html_ext: ShouldStripHtmlExt,
     cache_busted_paths: CacheBustedPaths,
@@ -168,6 +169,7 @@ impl Parse for EmbedAssets {
         // Default to no compression
         let mut maybe_should_compress = None;
         let mut maybe_ignore_dirs = None;
+        let mut maybe_ignore_files = None;
         let mut maybe_should_strip_html_ext = None;
         let mut maybe_cache_busted_paths = None;
 
@@ -185,6 +187,10 @@ impl Parse for EmbedAssets {
                     let value = input.parse()?;
                     maybe_ignore_dirs = Some(value);
                 }
+                "ignore_files" => {
+                    let value = input.parse()?;
+                    maybe_ignore_files = Some(value);
+                }
                 "strip_html_ext" => {
                     let value = input.parse()?;
                     maybe_should_strip_html_ext = Some(value);
@@ -196,7 +202,7 @@ impl Parse for EmbedAssets {
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_dirs`, `strip_html_ext`, or `cache_busted_paths`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_dirs`, `ignore_files`, `strip_html_ext`, or `cache_busted_paths`",
                     ));
                 }
             }
@@ -219,6 +225,9 @@ impl Parse for EmbedAssets {
         let ignore_dirs_with_span = maybe_ignore_dirs.unwrap_or(IgnoreDirsWithSpan(vec![]));
         let validated_ignore_dirs = validate_ignore_dirs(ignore_dirs_with_span, &assets_dir.0)?;
 
+        let ignore_files_with_span = maybe_ignore_files.unwrap_or(IgnoreFilesWithSpan(vec![]));
+        let validated_ignore_files = validate_ignore_files(ignore_files_with_span, &assets_dir.0)?;
+
         let maybe_cache_busted_paths =
             maybe_cache_busted_paths.unwrap_or(CacheBustedPathsWithSpan(vec![]));
         let cache_busted_paths =
@@ -227,6 +236,7 @@ impl Parse for EmbedAssets {
         Ok(Self {
             assets_dir,
             validated_ignore_dirs,
+            validated_ignore_files,
             should_compress,
             should_strip_html_ext,
             cache_busted_paths,
@@ -238,6 +248,7 @@ impl ToTokens for EmbedAssets {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let AssetsDir(assets_dir) = &self.assets_dir;
         let ignore_dirs = &self.validated_ignore_dirs;
+        let ignore_files = &self.validated_ignore_files;
         let ShouldCompress(should_compress) = &self.should_compress;
         let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
         let cache_busted_paths = &self.cache_busted_paths;
@@ -245,6 +256,7 @@ impl ToTokens for EmbedAssets {
         let result = generate_static_routes(
             assets_dir,
             ignore_dirs,
+            ignore_files,
             should_compress,
             should_strip_html_ext,
             cache_busted_paths,
@@ -306,11 +318,23 @@ struct IgnoreDirs(Vec<PathBuf>);
 
 struct IgnoreDirsWithSpan(Vec<(PathBuf, Span)>);
 
+struct IgnoreFiles(Vec<PathBuf>);
+
+struct IgnoreFilesWithSpan(Vec<(PathBuf, Span)>);
+
 impl Parse for IgnoreDirsWithSpan {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let dirs = parse_dirs(input)?;
 
         Ok(IgnoreDirsWithSpan(dirs))
+    }
+}
+
+impl Parse for IgnoreFilesWithSpan {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let files = parse_dirs(input)?; // reuse parse_dirs since it's just parsing paths
+
+        Ok(IgnoreFilesWithSpan(files))
     }
 }
 
@@ -348,6 +372,42 @@ fn validate_ignore_dirs(
         }
     }
     Ok(IgnoreDirs(valid_ignore_dirs))
+}
+
+fn validate_ignore_files(
+    ignore_files: IgnoreFilesWithSpan,
+    assets_dir: &LitStr,
+) -> syn::Result<IgnoreFiles> {
+    let mut valid_ignore_files = Vec::new();
+    for (file, span) in ignore_files.0 {
+        let full_path = PathBuf::from(assets_dir.value()).join(&file);
+        match fs::metadata(&full_path) {
+            Ok(meta) if meta.is_dir() => {
+                return Err(syn::Error::new(
+                    span,
+                    "The specified ignored file is a directory. Use ignore_dirs instead.",
+                ));
+            }
+            Ok(_) => valid_ignore_files.push(full_path),
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
+                return Err(syn::Error::new(
+                    span,
+                    "The specified ignored file does not exist",
+                ))
+            }
+            Err(e) => {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "Error reading ignored file {}: {}",
+                        file.to_string_lossy(),
+                        DisplayFullError(&e)
+                    ),
+                ))
+            }
+        }
+    }
+    Ok(IgnoreFiles(valid_ignore_files))
 }
 
 struct ShouldCompress(LitBool);
@@ -453,6 +513,7 @@ fn parse_dirs(input: ParseStream) -> syn::Result<Vec<(PathBuf, Span)>> {
 fn generate_static_routes(
     assets_dir: &LitStr,
     ignore_dirs: &IgnoreDirs,
+    ignore_files: &IgnoreFiles,
     should_compress: &LitBool,
     should_strip_html_ext: &LitBool,
     cache_busted_paths: &CacheBustedPaths,
@@ -467,6 +528,11 @@ fn generate_static_routes(
         .0
         .iter()
         .map(|d| d.canonicalize().map_err(Error::CannotCanonicalizeIgnoreDir))
+        .collect::<Result<Vec<_>, _>>()?;
+    let canon_ignore_files = ignore_files
+        .0
+        .iter()
+        .map(|f| f.canonicalize().map_err(Error::CannotCanonicalizeFile))
         .collect::<Result<Vec<_>, _>>()?;
     let canon_cache_busted_dirs = cache_busted_paths
         .dirs
@@ -495,6 +561,11 @@ fn generate_static_routes(
             .iter()
             .any(|ignore_dir| entry.starts_with(ignore_dir))
         {
+            continue;
+        }
+
+        // Skip `entry`s which are explicitly ignored files
+        if canon_ignore_files.contains(&entry) {
             continue;
         }
 
