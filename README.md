@@ -31,13 +31,13 @@ Use the `embed_assets!` macro to create a `static_router()` function in scope wh
 ```rust
 use static_serve::embed_assets;
 
-embed_assets!("assets", compress = true, cache_busted_paths = ["immutable"]);
+embed_assets!("assets", compress = true, ignore_files = ["temp.txt"], cache_busted_paths = ["immutable"]);
 let router = static_router();
 ```
 
 This will:
 
-- Include all files from the `assets` directory
+- Include all files from the `assets` directory except `temp.txt`
 - Compress them using `gzip` and `zstd` (if beneficial)
 - For only files in `assets/immutable`, add a `Cache-Control` header with `public, max-age=31536000, immutable` (since these are marked as cache-busted paths)
 - Generate a `static_router()` function to serve these assets
@@ -51,6 +51,8 @@ This will:
 - `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
 
 - `ignore_dirs = ["my_ignore_dir", "other_ignore_dir"]` - a bracketed list of `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
+
+- `ignore_files = ["my_ignore_file.txt", "other_ignore_file.js"]` - a bracketed list of `&str`s of the specific files inside the target directory, which should be ignored and not included. (If this parameter is missing, no files will be ignored)
 
 - `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, leaving just the root (defaults to false)
 
