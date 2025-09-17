@@ -31,13 +31,13 @@ Use the `embed_assets!` macro to create a `static_router()` function in scope wh
 ```rust
 use static_serve::embed_assets;
 
-embed_assets!("assets", compress = true, ignore_files = ["temp.txt"], cache_busted_paths = ["immutable"]);
+embed_assets!("assets", compress = true, ignore_paths = ["temp.txt","temp"], cache_busted_paths = ["immutable"]);
 let router = static_router();
 ```
 
 This will:
 
-- Include all files from the `assets` directory except `temp.txt`
+- Include all files from the `assets` directory except `temp.txt` and the `temp` directory
 - Compress them using `gzip` and `zstd` (if beneficial)
 - For only files in `assets/immutable`, add a `Cache-Control` header with `public, max-age=31536000, immutable` (since these are marked as cache-busted paths)
 - Generate a `static_router()` function to serve these assets
