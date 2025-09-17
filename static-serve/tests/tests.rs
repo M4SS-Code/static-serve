@@ -1081,7 +1081,7 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
 }
 
 #[tokio::test]
-async fn router_created_ignore_files() {
+async fn router_created_ignore_paths() {
     embed_assets!(
         "../static-serve/test_assets/small",
         ignore_paths = ["app.js"]
