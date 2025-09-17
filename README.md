@@ -50,9 +50,7 @@ This will:
 
 - `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
 
-- `ignore_dirs = ["my_ignore_dir", "other_ignore_dir"]` - a bracketed list of `&str`s of the paths/subdirectories inside the target directory, which should be ignored and not included. (If this parameter is missing, no subdirectories will be ignored)
-
-- `ignore_files = ["my_ignore_file.txt", "other_ignore_file.js"]` - a bracketed list of `&str`s of the specific files inside the target directory, which should be ignored and not included. (If this parameter is missing, no files will be ignored)
+- `ignore_paths = ["my_ignore_dir", "other_ignore_dir", "my_ignore_file.txt"]` - a bracketed list of `&str`s of paths/subdirectories/files inside the target directory, which should be ignored and not included. (If this parameter is missing, no paths/subdirectories/files will be ignored)
 
 - `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, leaving just the root (defaults to false)
 

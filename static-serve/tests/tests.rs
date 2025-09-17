@@ -208,8 +208,8 @@ async fn router_created_compressed_zstd_or_gzip_accepted() {
 }
 
 #[tokio::test]
-async fn router_created_ignore_dirs_one() {
-    embed_assets!("../static-serve/test_assets", ignore_dirs = ["dist"]);
+async fn router_created_ignore_paths_one() {
+    embed_assets!("../static-serve/test_assets", ignore_paths = ["dist"]);
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -230,10 +230,10 @@ async fn router_created_ignore_dirs_one() {
 }
 
 #[tokio::test]
-async fn router_created_ignore_dirs_three() {
+async fn router_created_ignore_paths_three() {
     embed_assets!(
         "../static-serve/test_assets",
-        ignore_dirs = ["big", "small", "dist", "with_html"]
+        ignore_paths = ["big", "small", "dist", "with_html"]
     );
     let router: Router<()> = static_router();
     // all directories ignored, so router has no routes
@@ -1084,20 +1084,20 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
 async fn router_created_ignore_files() {
     embed_assets!(
         "../static-serve/test_assets/small",
-        ignore_files = ["app.js"]
+        ignore_paths = ["app.js"]
     );
     let router: Router<()> = static_router();
 
     // app.js should be ignored, but styles.css should be available
     assert!(router.has_routes());
 
-    // Request for app.js should succeed
+    // Request for styles.css should succeed
     let request = create_request("/styles.css", &Compression::None);
     let response = get_response(router.clone(), request).await;
     let (parts, _) = response.into_parts();
     assert!(parts.status.is_success());
 
-    // Request for index.html should return 404 since it's ignored
+    // Request for app.js should return 404 since it's ignored
     let request = create_request("/app.js", &Compression::None);
     let response = get_response(router, request).await;
     let (parts, _) = response.into_parts();
@@ -1108,11 +1108,11 @@ async fn router_created_ignore_files() {
 async fn router_created_ignore_multiple_files() {
     embed_assets!(
         "../static-serve/test_assets/big",
-        ignore_files = ["app.js", "styles.css"]
+        ignore_paths = ["app.js", "styles.css"]
     );
     let router: Router<()> = static_router();
 
-    // All files in /big should be ignored, but files in /big/immutable should still be available
+    // app.js and styles.css at root should be ignored, but files in /big/immutable should still be available
     assert!(router.has_routes());
 
     // Request for ignored files should return 404
