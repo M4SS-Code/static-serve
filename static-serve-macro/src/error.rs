@@ -21,8 +21,8 @@ pub(crate) enum Error {
     FilePathIsNotUtf8,
     #[error("Invalid unicode in directory name")]
     InvalidUnicodeInDirectoryName,
-    #[error("Cannot canonicalize ignore directory")]
-    CannotCanonicalizeIgnoreDir(#[source] io::Error),
+    #[error("Cannot canonicalize ignore path")]
+    CannotCanonicalizeIgnorePath(#[source] io::Error),
     #[error("Invalid unicode in directory name")]
     InvalidUnicodeInEntryName,
     #[error("Error while compressing with gzip")]
