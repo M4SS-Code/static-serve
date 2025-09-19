@@ -18,7 +18,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-static-serve = "0.3"
+static-serve = "0.4"
 axum = "0.8"
 ```
 
