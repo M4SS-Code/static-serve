@@ -28,7 +28,7 @@ axum = "0.8"
 
 Use the `embed_assets!` macro to create a `static_router()` function in scope which will include your static files, embedding them into your binary:
 
-```rust
+```rust,ignore
 use static_serve::embed_assets;
 
 embed_assets!("assets", compress = true, ignore_paths = ["temp.txt","temp"], cache_busted_paths = ["immutable"]);
@@ -60,8 +60,9 @@ This will:
 
 Use the `embed_asset!` macro to return a function you can use as a GET handler, which will include your static file, embedded into your binary:
 
-```rust
-use static_serve::embed_assets;
+```rust,ignore
+use axum::Router;
+use static_serve::embed_asset;
 
 let router: Router<()> = Router::new();
 let handler = embed_asset!("assets/my_file.png", compress = true, cache_bust = true);
@@ -96,7 +97,7 @@ The crate automatically handles:
 
 ## Example
 
-```rust
+```rust,ignore
 use axum::{Router, Server};
 use static_serve::{embed_assets, embed_asset};
 
