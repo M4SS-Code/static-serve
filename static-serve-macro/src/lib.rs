@@ -41,6 +41,7 @@ struct EmbedAsset {
     asset_file: AssetFile,
     should_compress: ShouldCompress,
     cache_busted: IsCacheBusted,
+    allow_unknown_extensions: LitBool,
 }
 
 struct AssetFile(LitStr);
@@ -52,6 +53,7 @@ impl Parse for EmbedAsset {
         // Default to no compression, no cache-busting
         let mut maybe_should_compress = None;
         let mut maybe_is_cache_busted = None;
+        let mut maybe_allow_unknown_extensions = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -67,11 +69,15 @@ impl Parse for EmbedAsset {
                     let value = input.parse()?;
                     maybe_is_cache_busted = Some(value);
                 }
+                "allow_unknown_extensions" => {
+                    let value = input.parse()?;
+                    maybe_allow_unknown_extensions = Some(value);
+                }
                 _ => {
                     return Err(syn::Error::new(
                     key.span(),
                     format!(
-                        "Unknown key in `embed_asset!` macro. Expected `compress` or `cache_bust` but got {key}"
+                        "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, or `allow_unknown_extensions` but got {key}"
                     ),
                 ));
                 }
@@ -89,11 +95,16 @@ impl Parse for EmbedAsset {
                 span: Span::call_site(),
             })
         });
+        let allow_unknown_extensions = maybe_allow_unknown_extensions.unwrap_or(LitBool {
+            value: false,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             asset_file,
             should_compress,
             cache_busted,
+            allow_unknown_extensions,
         })
     }
 }
@@ -136,8 +147,14 @@ impl ToTokens for EmbedAsset {
         let AssetFile(asset_file) = &self.asset_file;
         let ShouldCompress(should_compress) = &self.should_compress;
         let IsCacheBusted(cache_busted) = &self.cache_busted;
+        let allow_unknown_extensions = &self.allow_unknown_extensions;
 
-        let result = generate_static_handler(asset_file, should_compress, cache_busted);
+        let result = generate_static_handler(
+            asset_file,
+            should_compress,
+            cache_busted,
+            allow_unknown_extensions,
+        );
 
         match result {
             Ok(value) => {
@@ -159,6 +176,7 @@ struct EmbedAssets {
     should_compress: ShouldCompress,
     should_strip_html_ext: ShouldStripHtmlExt,
     cache_busted_paths: CacheBustedPaths,
+    allow_unknown_extensions: LitBool,
 }
 
 impl Parse for EmbedAssets {
@@ -170,6 +188,7 @@ impl Parse for EmbedAssets {
         let mut maybe_ignore_paths = None;
         let mut maybe_should_strip_html_ext = None;
         let mut maybe_cache_busted_paths = None;
+        let mut maybe_allow_unknown_extensions = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -193,10 +212,14 @@ impl Parse for EmbedAssets {
                     let value = input.parse()?;
                     maybe_cache_busted_paths = Some(value);
                 }
+                "allow_unknown_extensions" => {
+                    let value = input.parse()?;
+                    maybe_allow_unknown_extensions = Some(value);
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, or `cache_busted_paths`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, or `allow_unknown_extensions`",
                     ));
                 }
             }
@@ -224,12 +247,18 @@ impl Parse for EmbedAssets {
         let cache_busted_paths =
             validate_cache_busted_paths(maybe_cache_busted_paths, &assets_dir.0)?;
 
+        let allow_unknown_extensions = maybe_allow_unknown_extensions.unwrap_or(LitBool {
+            value: false,
+            span: Span::call_site(),
+        });
+
         Ok(Self {
             assets_dir,
             validated_ignore_paths,
             should_compress,
             should_strip_html_ext,
             cache_busted_paths,
+            allow_unknown_extensions,
         })
     }
 }
@@ -241,6 +270,7 @@ impl ToTokens for EmbedAssets {
         let ShouldCompress(should_compress) = &self.should_compress;
         let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
         let cache_busted_paths = &self.cache_busted_paths;
+        let allow_unknown_extensions = &self.allow_unknown_extensions;
 
         let result = generate_static_routes(
             assets_dir,
@@ -248,6 +278,7 @@ impl ToTokens for EmbedAssets {
             should_compress,
             should_strip_html_ext,
             cache_busted_paths,
+            allow_unknown_extensions.value,
         );
 
         match result {
@@ -450,6 +481,7 @@ fn generate_static_routes(
     should_compress: &LitBool,
     should_strip_html_ext: &LitBool,
     cache_busted_paths: &CacheBustedPaths,
+    allow_unknown_extensions: bool,
 ) -> Result<TokenStream, error::Error> {
     let assets_dir_abs = Path::new(&assets_dir.value())
         .canonicalize()
@@ -522,6 +554,7 @@ fn generate_static_routes(
             should_compress,
             should_strip_html_ext,
             is_entry_cache_busted,
+            allow_unknown_extensions,
         )?;
 
         routes.push(quote! {
@@ -557,6 +590,7 @@ fn generate_static_handler(
     asset_file: &LitStr,
     should_compress: &LitBool,
     cache_busted: &LitBool,
+    allow_unknown_extensions: &LitBool,
 ) -> Result<TokenStream, error::Error> {
     let asset_file_abs = Path::new(&asset_file.value())
         .canonicalize()
@@ -580,6 +614,7 @@ fn generate_static_handler(
             span: Span::call_site(),
         },
         cache_busted.value(),
+        allow_unknown_extensions.value(),
     )?;
 
     let route = quote! {
@@ -632,6 +667,7 @@ impl<'a> EmbeddedFileInfo<'a> {
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
         cache_busted: bool,
+        allow_unknown_extensions: bool,
     ) -> Result<Self, Error> {
         let contents = fs::read(pathbuf).map_err(Error::CannotReadEntryContents)?;
 
@@ -644,7 +680,7 @@ impl<'a> EmbeddedFileInfo<'a> {
             (None, None)
         };
 
-        let content_type = file_content_type(pathbuf)?;
+        let content_type = file_content_type(pathbuf, allow_unknown_extensions)?;
 
         // entry_path is only needed for the router (embed_assets!)
         let entry_path = if let Some(dir) = assets_dir_abs_str {
@@ -738,26 +774,32 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<LitByteStr
 /// Use `mime_guess` to get the best guess of the file's MIME type
 /// by looking at its extension, or return an error if unable.
 ///
+/// If the `allow_unknown_extensions` parameter is true, an unknown ext
+/// will not produce an error, but application/octet-stream.
+///
 /// We accept the first guess because [`mime_guess` updates the order
 /// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
-fn file_content_type(path: &Path) -> Result<String, error::Error> {
-    match path.extension() {
-        Some(ext) => {
-            let guesses = mime_guess::MimeGuess::from_ext(
-                ext.to_str()
-                    .ok_or(error::Error::InvalidFileExtension(path.into()))?,
-            );
+fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<String, error::Error> {
+    let ext = path.extension().ok_or(if allow_unknown_extensions {
+        return Ok(mime_guess::mime::APPLICATION_OCTET_STREAM.to_string());
+    } else {
+        error::Error::UnknownFileExtension(None)
+    })?;
 
-            if let Some(guess) = guesses.first_raw() {
-                Ok(guess.to_owned())
-            } else {
-                Err(error::Error::UnknownFileExtension(
-                    path.extension().map(Into::into),
-                ))
-            }
-        }
-        None => Err(error::Error::UnknownFileExtension(None)),
+    let ext = ext
+        .to_str()
+        .ok_or(error::Error::InvalidFileExtension(path.into()))?;
+
+    let guess = mime_guess::MimeGuess::from_ext(ext);
+
+    if allow_unknown_extensions {
+        return Ok(guess.first_or_octet_stream().to_string());
     }
+
+    guess
+        .first_raw()
+        .map(ToOwned::to_owned)
+        .ok_or(error::Error::UnknownFileExtension(Some(ext.into())))
 }
 
 fn etag(contents: &[u8]) -> String {
