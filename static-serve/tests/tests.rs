@@ -1137,3 +1137,48 @@ async fn router_created_ignore_multiple_files() {
     let (parts, _) = response.into_parts();
     assert!(parts.status.is_success());
 }
+
+/// The corresponding failing test is in static-serve-macro/src/lib.rs
+/// in the `embed_assets` docstring, because only doctests support
+/// the `compile_fail` attribute.
+#[tokio::test]
+async fn serves_unknown_extensions() {
+    embed_assets!(
+        "../static-serve/test_unknown_extensions",
+        allow_unknown_extensions = true
+    );
+    let router: Router<()> = static_router();
+    assert!(router.has_routes());
+
+    // Test `.DS_STORE`
+    let request = create_request("/.DS_STORE", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "application/octet-stream"
+    );
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    assert_eq!(*collected_body_bytes, []);
+
+    // Test `example.wtf`
+    let request = create_request("/example.wtf", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let (parts, body) = response.into_parts();
+    assert!(parts.status.is_success());
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "application/octet-stream"
+    );
+
+    let collected_body_bytes = body
+        .into_data_stream()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
+    assert_eq!(&collected_body_bytes, &b"example.wtf");
+}
