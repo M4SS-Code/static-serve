@@ -25,6 +25,17 @@ use error::{Error, GzipType, ZstdType};
 
 #[proc_macro]
 /// Embed and optionally compress static assets for a web server
+///
+/// ```compile_fail,hidden
+/// # // The corresponding successful test is in static-serve/tests/tests.rs,
+/// # // where tests usually belong. It's called serves_unknown_attributes.
+/// # // But only doctests support the `compile_fail` attribute so the failing
+/// # // test is placed here.
+/// embed_assets!(
+///     "../static-serve/test_unknown_extensions",
+///     allow_unknown_extensions = false
+/// );
+/// ```
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
     quote! { #parsed }.into()

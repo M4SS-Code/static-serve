@@ -56,6 +56,8 @@ This will:
 
 - `cache_busted_paths = ["my_immutables_dir", "my_immutable_file"]` - a bracketed list of `&str`s of the subdirectories and/or single files which should gain the `Cache-Control` header with `public, max-age=31536000, immutable` for cache-busted paths. If this parameter is missing, the default is that no embedded files will have the `Cache-Control` header. Note: the files in `cache_busted_paths` need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header. 
 
+- `allow_unknown_extensions = false` - serve files with unknown extensions as `application/octet-stream` content-type; when not set to `true`, compilation fails if a content type cannot be guessed from the extension, or if the file has no extension
+
 ### Embedding a single static asset file
 
 Use the `embed_asset!` macro to return a function you can use as a GET handler, which will include your static file, embedded into your binary:
@@ -85,6 +87,7 @@ This will:
 
 - `compress = false` - compress a static file with zstd and gzip, true or false (defaults to false)
 - `cache_bust = false` - add a `Cache-Control` header with the value `public, max-age=31536000, immutable` for a cache-busted asset (defaults to false)
+- `allow_unknown_extensions = false` - serve files with unknown extensions as `application/octet-stream` content-type; when not set to `true`, compilation   fails if a content type cannot be guessed from the extension, or if the file has no extension
 
 ## Conditional Requests & Caching
 
