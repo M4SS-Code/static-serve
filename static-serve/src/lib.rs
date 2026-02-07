@@ -3,18 +3,18 @@
 use std::convert::Infallible;
 
 use axum::{
+    Router,
     extract::FromRequestParts,
     http::{
+        StatusCode,
         header::{
-            HeaderValue, ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG,
+            ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG, HeaderValue,
             IF_NONE_MATCH, VARY,
         },
         request::Parts,
-        StatusCode,
     },
     response::IntoResponse,
-    routing::{get, MethodRouter},
-    Router,
+    routing::{MethodRouter, get},
 };
 use bytes::Bytes;
 

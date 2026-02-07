@@ -12,12 +12,12 @@ use display_full_error::DisplayFullError;
 use flate2::write::GzEncoder;
 use glob::glob;
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 use sha1::{Digest as _, Sha1};
 use syn::{
-    bracketed,
+    Ident, LitBool, LitByteStr, LitStr, Token, bracketed,
     parse::{Parse, ParseStream},
-    parse_macro_input, Ident, LitBool, LitByteStr, LitStr, Token,
+    parse_macro_input,
 };
 
 mod error;
@@ -86,11 +86,11 @@ impl Parse for EmbedAsset {
                 }
                 _ => {
                     return Err(syn::Error::new(
-                    key.span(),
-                    format!(
-                        "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, or `allow_unknown_extensions` but got {key}"
-                    ),
-                ));
+                        key.span(),
+                        format!(
+                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, or `allow_unknown_extensions` but got {key}"
+                        ),
+                    ));
                 }
             }
         }
@@ -369,7 +369,7 @@ fn validate_ignore_paths(
                 return Err(syn::Error::new(
                     span,
                     "The specified ignored path does not exist",
-                ))
+                ));
             }
             Err(e) => {
                 return Err(syn::Error::new(
@@ -379,7 +379,7 @@ fn validate_ignore_paths(
                         dir.to_string_lossy(),
                         DisplayFullError(&e)
                     ),
-                ))
+                ));
             }
         }
     }
@@ -446,7 +446,7 @@ fn validate_cache_busted_paths(
                 return Err(syn::Error::new(
                     span,
                     "The specified directory for cache busting does not exist",
-                ))
+                ));
             }
             Err(e) => {
                 return Err(syn::Error::new(
@@ -456,7 +456,7 @@ fn validate_cache_busted_paths(
                         dir.to_string_lossy(),
                         DisplayFullError(&e)
                     ),
-                ))
+                ));
             }
         }
     }

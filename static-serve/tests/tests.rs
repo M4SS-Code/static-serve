@@ -2,12 +2,12 @@
 use std::io::Read;
 
 use axum::{
+    Router,
     body::Body,
     http::{
-        header::{ACCEPT_ENCODING, CONTENT_ENCODING, IF_NONE_MATCH},
         HeaderValue, Request, Response, StatusCode,
+        header::{ACCEPT_ENCODING, CONTENT_ENCODING, IF_NONE_MATCH},
     },
-    Router,
 };
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -544,13 +544,15 @@ async fn handles_one_file_same_etag_with_cache_control() {
             .expect("no content-length header!"),
         "0"
     );
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     assert!(collected_body_bytes.is_empty());
@@ -578,13 +580,15 @@ async fn handles_one_file_different_etag_with_cache_control() {
         "text/javascript"
     );
     assert!(parts.headers.contains_key("etag"));
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
 
@@ -831,13 +835,15 @@ async fn handles_one_file_with_cache_control() {
 
     assert!(parts.status.is_success());
     assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -930,13 +936,15 @@ async fn using_both_macros_with_cache_busting_works() {
         "text/javascript"
     );
     assert!(parts.headers.contains_key("etag"));
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
 
@@ -959,13 +967,15 @@ async fn using_both_macros_with_cache_busting_works() {
 
     assert!(parts.status.is_success());
     assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -992,13 +1002,15 @@ async fn handles_dir_with_cache_control_on_single_file() {
 
     assert!(parts.status.is_success());
     assert_eq!(parts.headers.get("content-type").unwrap(), "text/css");
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -1042,13 +1054,15 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
 
     assert!(parts.status.is_success());
     assert_eq!(parts.headers.get("content-type").unwrap(), "text/css");
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -1066,13 +1080,15 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
         parts.headers.get("content-type").unwrap(),
         "text/javascript"
     );
-    assert!(parts
-        .headers
-        .get("cache-control")
-        .expect("cache-control header should exist")
-        .to_str()
-        .expect("should make cache-control header into str")
-        .contains("immutable"));
+    assert!(
+        parts
+            .headers
+            .get("cache-control")
+            .expect("cache-control header should exist")
+            .to_str()
+            .expect("should make cache-control header into str")
+            .contains("immutable")
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
