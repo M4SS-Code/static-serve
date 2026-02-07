@@ -112,14 +112,17 @@ where
 /// Creates a route for a single static asset.
 ///
 /// Used by the `embed_asset!` macro, so it needs to be `pub`.
-pub fn static_method_router(
+pub fn static_method_router<S>(
     content_type: &'static str,
     etag: &'static str,
     body: &'static [u8],
     body_gz: Option<&'static [u8]>,
     body_zst: Option<&'static [u8]>,
     cache_busted: bool,
-) -> MethodRouter {
+) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     MethodRouter::get(
         MethodRouter::new(),
         move |accept_encoding: AcceptEncoding, if_none_match: IfNoneMatch| async move {
