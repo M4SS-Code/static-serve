@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{
         HeaderValue, Request, Response, StatusCode,
-        header::{ACCEPT_ENCODING, CONTENT_ENCODING, IF_NONE_MATCH},
+        header::{ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_NONE_MATCH, RANGE},
     },
 };
 use http_body_util::BodyExt;
@@ -1152,6 +1152,106 @@ async fn router_created_ignore_multiple_files() {
     let response = get_response(router, request).await;
     let (parts, _) = response.into_parts();
     assert!(parts.status.is_success());
+}
+
+#[tokio::test]
+async fn range_request_returns_206_with_partial_body() {
+    embed_assets!("../static-serve/test_assets/small", compress = false);
+    let router: Router<()> = static_router();
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, "bytes=0-4")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(parts.headers.get("content-range").unwrap(), "bytes 0-4/30");
+    assert_eq!(parts.headers.get(ACCEPT_RANGES).unwrap(), "bytes");
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected = &include_bytes!("../../test_assets/small/app.js")[..5];
+    assert_eq!(*collected_body_bytes, *expected);
+}
+
+#[tokio::test]
+async fn unsatisfiable_range_returns_416() {
+    embed_assets!("../static-serve/test_assets/small", compress = false);
+    let router: Router<()> = static_router();
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, "bytes=100-200")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, _body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert!(parts.headers.contains_key("content-range"));
+    assert_eq!(parts.headers.get(ACCEPT_RANGES).unwrap(), "bytes");
+}
+
+#[tokio::test]
+async fn accept_ranges_present_on_200() {
+    embed_assets!("../static-serve/test_assets/small", compress = false);
+    let router: Router<()> = static_router();
+
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router, request).await;
+    let (parts, _body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::OK);
+    assert_eq!(parts.headers.get(ACCEPT_RANGES).unwrap(), "bytes");
+}
+
+#[tokio::test]
+async fn accept_ranges_absent_on_304() {
+    embed_assets!("../static-serve/test_assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    // First request to get the etag
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let etag = response
+        .headers()
+        .get("etag")
+        .expect("should have etag")
+        .clone();
+
+    // Second request with matching etag -> 304
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_NONE_MATCH, etag)
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, _body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::NOT_MODIFIED);
+    assert!(parts.headers.get(ACCEPT_RANGES).is_none());
+}
+
+#[tokio::test]
+async fn range_request_disables_compression() {
+    embed_assets!("../static-serve/test_assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    // Request with both Range and Accept-Encoding: zstd
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, "bytes=0-4")
+        .header(ACCEPT_ENCODING, "zstd")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::PARTIAL_CONTENT);
+    // Compression should be disabled for range requests
+    assert!(parts.headers.get(CONTENT_ENCODING).is_none());
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    // Should be the first 5 bytes of the uncompressed body
+    let expected = &include_bytes!("../../test_assets/big/app.js")[..5];
+    assert_eq!(*collected_body_bytes, *expected);
 }
 
 /// The corresponding failing test is in static-serve-macro/src/lib.rs

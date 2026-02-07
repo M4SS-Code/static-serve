@@ -338,6 +338,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "range-requests"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76d40f24ec21fd59728e2178ff5e5ed402e1d211631ff6d3fcfc533b6a2d4cdb"
+dependencies = [
+ "axum-core",
+ "bytes",
+ "http",
+ "thiserror",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -388,6 +400,7 @@ dependencies = [
  "bytes",
  "flate2",
  "http-body-util",
+ "range-requests",
  "static-serve-macro",
  "tokio",
  "tower",

@@ -10,6 +10,8 @@ A Rust library for compressing and embedding static assets in a web server using
 
 - **ETag support** for conditional requests and caching
 
+- **HTTP Range Requests** for partial content responses (RFC 7233)
+
 - **Seamless Axum integration** with request extraction for encoding and caching headers
 
 ## Installation
@@ -97,6 +99,8 @@ The crate automatically handles:
 - `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged
 
 - With the optional cache-bust headers feature, each embedded file in the `cache_busted_paths` array (or single file in the case of `embed_asset!` with `cache_bust = true`) will be returned with a `Cache-Control` header with the value `public, max-age=31536000, immutable`. Note: the files involved need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header.
+
+- `Accept-Ranges: bytes` is advertised on all successful responses. When a `Range` header is present, the server responds with `206 Partial Content` and the requested byte range, or `416 Range Not Satisfiable` if the range is invalid. Compression is automatically disabled for range requests since byte offsets refer to the uncompressed body.
 
 ## Example
 
