@@ -8,7 +8,7 @@ resolver = "2"
 [workspace.package]
 version = "0.4.0"
 edition = "2021"
-rust-version = "1.83"
+rust-version = "1.88"
 description = "A helper for compressing and embedding static assets in an Axum webserver"
 repository = "https://github.com/M4SS-Code/static-serve"
 license = "MIT OR Apache-2.0"

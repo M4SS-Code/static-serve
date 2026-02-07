@@ -55,8 +55,8 @@ jobs:
             rust: beta
           - name: nightly
             rust: nightly
-          - name: 1.83.0
-            rust: 1.83.0
+          - name: 1.88.0
+            rust: 1.88.0
 
     steps:
       - uses: actions/checkout@v6
