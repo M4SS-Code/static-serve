@@ -658,11 +658,11 @@ impl ToTokens for OptionBytesSlice {
     }
 }
 
-struct EmbeddedFileInfo<'a> {
+struct EmbeddedFileInfo {
     /// When creating a `Router`, we need the API path/route to the
     /// target file. If creating a `Handler`, this is not needed since
     /// the router is responsible for the file's path on the server.
-    entry_path: Option<&'a str>,
+    entry_path: Option<String>,
     content_type: String,
     etag_str: String,
     lit_byte_str_contents: LitByteStr,
@@ -671,9 +671,9 @@ struct EmbeddedFileInfo<'a> {
     cache_busted: bool,
 }
 
-impl<'a> EmbeddedFileInfo<'a> {
+impl EmbeddedFileInfo {
     fn from_path(
-        pathbuf: &'a PathBuf,
+        pathbuf: &PathBuf,
         assets_dir_abs_str: Option<&str>,
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
@@ -695,18 +695,18 @@ impl<'a> EmbeddedFileInfo<'a> {
 
         // entry_path is only needed for the router (embed_assets!)
         let entry_path = if let Some(dir) = assets_dir_abs_str {
-            if should_strip_html_ext.value && content_type == "text/html" {
-                Some(
-                    strip_html_ext(pathbuf)?
-                        .strip_prefix(dir)
-                        .unwrap_or_default(),
-                )
+            let relative_entry = pathbuf
+                .strip_prefix(dir)
+                .ok()
+                .and_then(|p| p.to_str())
+                .unwrap_or_default();
+            let relative_path = if should_strip_html_ext.value && content_type == "text/html" {
+                strip_html_ext_relative(relative_entry)
             } else {
-                pathbuf
-                    .to_str()
-                    .ok_or(Error::InvalidUnicodeInEntryName)?
-                    .strip_prefix(dir)
-            }
+                relative_entry.to_owned()
+            };
+
+            Some(normalize_web_path(&relative_path))
         } else {
             None
         };
@@ -820,21 +820,48 @@ fn etag(contents: &[u8]) -> String {
     format!("\"{hash:016x}\"")
 }
 
-fn strip_html_ext(entry: &Path) -> Result<&str, Error> {
-    let entry_str = entry.to_str().ok_or(Error::InvalidUnicodeInEntryName)?;
-    let mut output = entry_str;
+/// Strip `.html`/`.htm` from a relative path for "clean URL" routing.
+///
+/// - Normalizes Windows `\` separators to `/`.
+/// - Removes a trailing `.html` or `.htm` extension if present.
+/// - If the resulting path ends with `/index` (or is exactly `index`), removes the `index` part.
+///
+/// Examples:
+/// - `index.html` -> `""` (served at `/`)
+/// - `docs/index.htm` -> `docs/`
+/// - `about.html` -> `about`
+fn strip_html_ext_relative(entry: &str) -> String {
+    let mut output = entry.replace('\\', "/");
 
     // Strip the extension
     if let Some(prefix) = output.strip_suffix(".html") {
-        output = prefix;
+        output = prefix.to_owned();
     } else if let Some(prefix) = output.strip_suffix(".htm") {
-        output = prefix;
+        output = prefix.to_owned();
     }
 
     // If it was `/index.html` or `/index.htm`, also remove `index`
     if output.ends_with("/index") {
-        output = output.strip_suffix("index").unwrap_or("/");
+        output = output.strip_suffix("index").unwrap_or("/").to_owned();
+    } else if output == "index" {
+        output.clear();
     }
 
-    Ok(output)
+    output
+}
+
+/// Normalize an embedded asset's relative file path into a web route path.
+///
+/// - Converts Windows `\` path separators to `/`.
+/// - Ensures the returned path starts with `/`.
+/// - Returns `/` for the empty path (used for `index.html` when `strip_html_ext = true`).
+fn normalize_web_path(relative_path: &str) -> String {
+    let normalized = relative_path.replace('\\', "/");
+    if normalized.is_empty() {
+        "/".to_owned()
+    } else if normalized.starts_with('/') {
+        normalized
+    } else {
+        format!("/{normalized}")
+    }
 }

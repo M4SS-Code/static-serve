@@ -23,8 +23,6 @@ pub(crate) enum Error {
     InvalidUnicodeInDirectoryName,
     #[error("Cannot canonicalize ignore path")]
     CannotCanonicalizeIgnorePath(#[source] io::Error),
-    #[error("Invalid unicode in directory name")]
-    InvalidUnicodeInEntryName,
     #[error("Error while compressing with gzip")]
     Gzip(#[from] GzipType),
     #[error("Error while compressing with zstd")]
