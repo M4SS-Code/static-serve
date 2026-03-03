@@ -820,18 +820,23 @@ fn etag(contents: &[u8]) -> String {
     format!("\"{hash:016x}\"")
 }
 
-/// Strip `.html`/`.htm` from a relative path for "clean URL" routing.
+/// Normalize a relative asset path, strip `.html`/`.htm`, and map
+/// `/index(.html|.htm)` to its directory route.
 ///
-/// - Normalizes Windows `\` separators to `/`.
-/// - Removes a trailing `.html` or `.htm` extension if present.
-/// - If the resulting path ends with `/index` (or is exactly `index`), removes the `index` part.
-///
-/// Examples:
-/// - `index.html` -> `""` (served at `/`)
-/// - `docs/index.htm` -> `docs/`
-/// - `about.html` -> `about`
+/// The input is normalized via `Path::components()` so separator style
+/// differences across platforms do not affect route generation.
 fn strip_html_ext_relative(entry: &str) -> String {
-    let mut output = entry.replace('\\', "/");
+    let mut output = Path::new(entry)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => segment.to_str(),
+            std::path::Component::CurDir
+            | std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
 
     // Strip the extension
     if let Some(prefix) = output.strip_suffix(".html") {
@@ -850,17 +855,24 @@ fn strip_html_ext_relative(entry: &str) -> String {
     output
 }
 
-/// Normalize an embedded asset's relative file path into a web route path.
+/// Convert a relative filesystem-style path into a rooted web route.
 ///
-/// - Converts Windows `\` path separators to `/`.
-/// - Ensures the returned path starts with `/`.
-/// - Returns `/` for the empty path (used for `index.html` when `strip_html_ext = true`).
+/// Path segments are normalized via `Path::components()`. The returned
+/// route is always absolute (starts with `/`) and defaults to `/` for
+/// empty input.
 fn normalize_web_path(relative_path: &str) -> String {
-    let normalized = relative_path.replace('\\', "/");
+    let normalized = Path::new(relative_path)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => segment.to_str(),
+            std::path::Component::CurDir => Some("."),
+            std::path::Component::ParentDir => Some(".."),
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
     if normalized.is_empty() {
         "/".to_owned()
-    } else if normalized.starts_with('/') {
-        normalized
     } else {
         format!("/{normalized}")
     }
