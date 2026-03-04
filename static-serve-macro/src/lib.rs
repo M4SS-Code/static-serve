@@ -865,15 +865,12 @@ fn normalize_web_path(relative_path: &str) -> String {
         .components()
         .filter_map(|component| match component {
             std::path::Component::Normal(segment) => segment.to_str(),
-            std::path::Component::CurDir => Some("."),
-            std::path::Component::ParentDir => Some(".."),
-            std::path::Component::RootDir | std::path::Component::Prefix(_) => None,
+            std::path::Component::CurDir
+            | std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => None,
         })
         .collect::<Vec<_>>()
         .join("/");
-    if normalized.is_empty() {
-        "/".to_owned()
-    } else {
-        format!("/{normalized}")
-    }
+    format!("/{normalized}")
 }
