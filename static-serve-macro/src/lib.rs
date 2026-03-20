@@ -658,11 +658,11 @@ impl ToTokens for OptionBytesSlice {
     }
 }
 
-struct EmbeddedFileInfo<'a> {
+struct EmbeddedFileInfo {
     /// When creating a `Router`, we need the API path/route to the
     /// target file. If creating a `Handler`, this is not needed since
     /// the router is responsible for the file's path on the server.
-    entry_path: Option<&'a str>,
+    entry_path: Option<String>,
     content_type: String,
     etag_str: String,
     lit_byte_str_contents: LitByteStr,
@@ -671,9 +671,9 @@ struct EmbeddedFileInfo<'a> {
     cache_busted: bool,
 }
 
-impl<'a> EmbeddedFileInfo<'a> {
+impl EmbeddedFileInfo {
     fn from_path(
-        pathbuf: &'a PathBuf,
+        pathbuf: &PathBuf,
         assets_dir_abs_str: Option<&str>,
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
@@ -695,18 +695,18 @@ impl<'a> EmbeddedFileInfo<'a> {
 
         // entry_path is only needed for the router (embed_assets!)
         let entry_path = if let Some(dir) = assets_dir_abs_str {
-            if should_strip_html_ext.value && content_type == "text/html" {
-                Some(
-                    strip_html_ext(pathbuf)?
-                        .strip_prefix(dir)
-                        .unwrap_or_default(),
-                )
+            let relative_entry = pathbuf
+                .strip_prefix(dir)
+                .ok()
+                .and_then(|p| p.to_str())
+                .unwrap_or_default();
+            let relative_path = if should_strip_html_ext.value && content_type == "text/html" {
+                strip_html_ext_relative(relative_entry)
             } else {
-                pathbuf
-                    .to_str()
-                    .ok_or(Error::InvalidUnicodeInEntryName)?
-                    .strip_prefix(dir)
-            }
+                relative_entry.to_owned()
+            };
+
+            Some(normalize_web_path(&relative_path))
         } else {
             None
         };
@@ -820,21 +820,57 @@ fn etag(contents: &[u8]) -> String {
     format!("\"{hash:016x}\"")
 }
 
-fn strip_html_ext(entry: &Path) -> Result<&str, Error> {
-    let entry_str = entry.to_str().ok_or(Error::InvalidUnicodeInEntryName)?;
-    let mut output = entry_str;
+/// Normalize a relative asset path, strip `.html`/`.htm`, and map
+/// `/index(.html|.htm)` to its directory route.
+///
+/// The input is normalized via `Path::components()` so separator style
+/// differences across platforms do not affect route generation.
+fn strip_html_ext_relative(entry: &str) -> String {
+    let mut output = Path::new(entry)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => segment.to_str(),
+            std::path::Component::CurDir
+            | std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
 
     // Strip the extension
     if let Some(prefix) = output.strip_suffix(".html") {
-        output = prefix;
+        output = prefix.to_owned();
     } else if let Some(prefix) = output.strip_suffix(".htm") {
-        output = prefix;
+        output = prefix.to_owned();
     }
 
     // If it was `/index.html` or `/index.htm`, also remove `index`
     if output.ends_with("/index") {
-        output = output.strip_suffix("index").unwrap_or("/");
+        output = output.strip_suffix("index").unwrap_or("/").to_owned();
+    } else if output == "index" {
+        output.clear();
     }
 
-    Ok(output)
+    output
+}
+
+/// Convert a relative filesystem-style path into a rooted web route.
+///
+/// Path segments are normalized via `Path::components()`. The returned
+/// route is always absolute (starts with `/`) and defaults to `/` for
+/// empty input.
+fn normalize_web_path(relative_path: &str) -> String {
+    let normalized = Path::new(relative_path)
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => segment.to_str(),
+            std::path::Component::CurDir
+            | std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("/{normalized}")
 }
