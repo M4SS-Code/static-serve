@@ -13,7 +13,7 @@ use flate2::write::GzEncoder;
 use glob::glob;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
-use sha1::{Digest as _, Sha1};
+use sha2::{Digest as _, Sha256};
 use syn::{
     Ident, LitBool, LitByteStr, LitStr, Token, bracketed,
     parse::{Parse, ParseStream},
@@ -814,9 +814,11 @@ fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Stri
 }
 
 fn etag(contents: &[u8]) -> String {
-    let sha256 = Sha1::digest(contents);
+    let sha256 = Sha256::digest(contents);
     let hash = u64::from_le_bytes(sha256[..8].try_into().unwrap())
-        ^ u64::from_le_bytes(sha256[8..16].try_into().unwrap());
+        ^ u64::from_le_bytes(sha256[8..16].try_into().unwrap())
+        ^ u64::from_le_bytes(sha256[16..24].try_into().unwrap())
+        ^ u64::from_le_bytes(sha256[24..32].try_into().unwrap());
     format!("\"{hash:016x}\"")
 }
 

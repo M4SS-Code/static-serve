@@ -369,10 +369,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha1"
+name = "sha2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -422,7 +422,7 @@ dependencies = [
  "mime_guess",
  "proc-macro2",
  "quote",
- "sha1",
+ "sha2",
  "syn",
  "thiserror",
  "zstd",
