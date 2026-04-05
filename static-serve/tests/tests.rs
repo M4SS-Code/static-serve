@@ -6,7 +6,9 @@ use axum::{
     body::Body,
     http::{
         HeaderValue, Request, Response, StatusCode,
-        header::{ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_NONE_MATCH, RANGE},
+        header::{
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_NONE_MATCH, IF_RANGE, RANGE,
+        },
     },
 };
 use http_body_util::BodyExt;
@@ -1252,6 +1254,75 @@ async fn range_request_disables_compression() {
     // Should be the first 5 bytes of the uncompressed body
     let expected = &include_bytes!("../../test_assets/big/app.js")[..5];
     assert_eq!(*collected_body_bytes, *expected);
+}
+
+#[tokio::test]
+async fn if_range_matching_etag_honors_range() {
+    embed_assets!("../static-serve/test_assets/small", compress = false);
+    let router: Router<()> = static_router();
+
+    // First get the etag
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let etag = response.headers().get("etag").unwrap().clone();
+
+    // Range + If-Range with matching etag -> 206
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, "bytes=0-4")
+        .header(IF_RANGE, etag)
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(parts.headers.get("content-range").unwrap(), "bytes 0-4/30");
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected = &include_bytes!("../../test_assets/small/app.js")[..5];
+    assert_eq!(*collected_body_bytes, *expected);
+}
+
+#[tokio::test]
+async fn if_range_mismatched_etag_returns_full_body() {
+    embed_assets!("../static-serve/test_assets/small", compress = false);
+    let router: Router<()> = static_router();
+
+    // Range + If-Range with non-matching etag -> 200 with full body
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, "bytes=0-4")
+        .header(IF_RANGE, "\"stale-etag\"")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::OK);
+    assert!(parts.headers.get("content-range").is_none());
+
+    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
+    let expected = include_bytes!("../../test_assets/small/app.js");
+    assert_eq!(*collected_body_bytes, *expected);
+}
+
+#[tokio::test]
+async fn if_range_mismatched_allows_compression() {
+    embed_assets!("../static-serve/test_assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    // Range + stale If-Range + Accept-Encoding -> 200 with compression
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, "bytes=0-4")
+        .header(IF_RANGE, "\"stale-etag\"")
+        .header(ACCEPT_ENCODING, "zstd")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, _body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::OK);
+    assert!(parts.headers.get("content-range").is_none());
+    assert_eq!(parts.headers.get(CONTENT_ENCODING).unwrap(), "zstd");
 }
 
 /// The corresponding failing test is in static-serve-macro/src/lib.rs

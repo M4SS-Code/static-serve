@@ -17,7 +17,10 @@ use axum::{
     routing::{MethodRouter, get},
 };
 use bytes::Bytes;
-use range_requests::{headers::range::HttpRange, serve_file_with_http_range};
+use range_requests::{
+    headers::{if_range::IfRange, range::HttpRange},
+    serve_file_with_http_range,
+};
 
 pub use static_serve_macro::{embed_asset, embed_assets};
 
@@ -95,7 +98,8 @@ where
         get(
             move |accept_encoding: AcceptEncoding,
                   if_none_match: IfNoneMatch,
-                  http_range: Option<HttpRange>| async move {
+                  http_range: Option<HttpRange>,
+                  if_range: Option<IfRange>| async move {
                 static_inner(StaticInnerData {
                     content_type,
                     etag,
@@ -106,6 +110,7 @@ where
                     accept_encoding,
                     if_none_match,
                     http_range,
+                    if_range,
                 })
             },
         ),
@@ -131,7 +136,8 @@ where
         MethodRouter::new(),
         move |accept_encoding: AcceptEncoding,
               if_none_match: IfNoneMatch,
-              http_range: Option<HttpRange>| async move {
+              http_range: Option<HttpRange>,
+              if_range: Option<IfRange>| async move {
             static_inner(StaticInnerData {
                 content_type,
                 etag,
@@ -142,6 +148,7 @@ where
                 accept_encoding,
                 if_none_match,
                 http_range,
+                if_range,
             })
         },
     )
@@ -162,6 +169,7 @@ struct StaticInnerData {
     accept_encoding: AcceptEncoding,
     if_none_match: IfNoneMatch,
     http_range: Option<HttpRange>,
+    if_range: Option<IfRange>,
 }
 
 fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
@@ -175,6 +183,7 @@ fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
         accept_encoding,
         if_none_match,
         http_range,
+        if_range,
     } = static_inner_data;
 
     let optional_cache_control = if cache_busted {
@@ -203,6 +212,15 @@ fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
         [(ACCEPT_RANGES, HeaderValue::from_static("bytes"))],
         resp_base,
     );
+
+    let http_range = match (http_range, if_range) {
+        (Some(range), Some(if_range)) => {
+            let etag_value = HeaderValue::from_static(etag);
+            if_range.evaluate(range, None, Some(&etag_value))
+        }
+        (range, _) => range,
+    };
+
     let (selected_body, optional_content_encoding) = match (
         (accept_encoding.gzip, body_gz),
         (accept_encoding.zstd, body_zst),
