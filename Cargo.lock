@@ -338,9 +338,9 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "range-requests"
-version = "0.1.3"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fba3babbdba13786e01e5cc550427296154ab87ddddf3ccc8cfbdfe00fdaf9d"
+checksum = "a80a58719403473ceb7fed3cf4dc84ca007dbeec7a7b686151c6f82a18a4f9ac"
 dependencies = [
  "axum-core",
  "bytes",

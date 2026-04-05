@@ -219,11 +219,6 @@ fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
         _ => (Bytes::from_static(body), None),
     };
 
-    if selected_body.is_empty() {
-        // Empty bodies cannot be range-served; return the full (empty) response.
-        return (resp_base, optional_content_encoding, selected_body).into_response();
-    }
-
     match serve_file_with_http_range(selected_body, http_range) {
         Ok(body_range) => (resp_base, optional_content_encoding, body_range).into_response(),
         Err(unsatisfiable) => (resp_base, unsatisfiable).into_response(),
