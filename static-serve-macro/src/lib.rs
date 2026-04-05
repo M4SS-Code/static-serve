@@ -841,9 +841,10 @@ fn normalize_web_path(relative_path: &str) -> String {
 /// Strip `.html`/`.htm` from an already-normalized web path in-place,
 /// and map `/index` to its parent directory route.
 fn strip_html_ext(path: &mut String) {
-    if path.ends_with(".html") {
+    let ext = path.rsplit_once('.').map(|(_, ext)| ext);
+    if ext.is_some_and(|ext| ext.eq_ignore_ascii_case("html")) {
         path.truncate(path.len() - ".html".len());
-    } else if path.ends_with(".htm") {
+    } else if ext.is_some_and(|ext| ext.eq_ignore_ascii_case("htm")) {
         path.truncate(path.len() - ".htm".len());
     }
 
