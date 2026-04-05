@@ -699,14 +699,13 @@ impl EmbeddedFileInfo {
                 .strip_prefix(dir)
                 .ok()
                 .and_then(|p| p.to_str())
-                .unwrap_or_default();
-            let relative_path = if should_strip_html_ext.value && content_type == "text/html" {
-                strip_html_ext_relative(relative_entry)
-            } else {
-                relative_entry.to_owned()
-            };
+                .ok_or(Error::InvalidUnicodeInEntryName)?;
+            let mut web_path = normalize_web_path(relative_entry);
+            if should_strip_html_ext.value && content_type == "text/html" {
+                strip_html_ext(&mut web_path);
+            }
 
-            Some(normalize_web_path(&relative_path))
+            Some(web_path)
         } else {
             None
         };
@@ -822,57 +821,35 @@ fn etag(contents: &[u8]) -> String {
     format!("\"{hash:016x}\"")
 }
 
-/// Normalize a relative asset path, strip `.html`/`.htm`, and map
-/// `/index(.html|.htm)` to its directory route.
-///
-/// The input is normalized via `Path::components()` so separator style
-/// differences across platforms do not affect route generation.
-fn strip_html_ext_relative(entry: &str) -> String {
-    let mut output = Path::new(entry)
-        .components()
-        .filter_map(|component| match component {
-            std::path::Component::Normal(segment) => segment.to_str(),
-            std::path::Component::CurDir
-            | std::path::Component::ParentDir
-            | std::path::Component::RootDir
-            | std::path::Component::Prefix(_) => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-
-    // Strip the extension
-    if let Some(prefix) = output.strip_suffix(".html") {
-        output = prefix.to_owned();
-    } else if let Some(prefix) = output.strip_suffix(".htm") {
-        output = prefix.to_owned();
-    }
-
-    // If it was `/index.html` or `/index.htm`, also remove `index`
-    if output.ends_with("/index") {
-        output = output.strip_suffix("index").unwrap_or("/").to_owned();
-    } else if output == "index" {
-        output.clear();
-    }
-
-    output
-}
-
 /// Convert a relative filesystem-style path into a rooted web route.
 ///
-/// Path segments are normalized via `Path::components()`. The returned
-/// route is always absolute (starts with `/`) and defaults to `/` for
-/// empty input.
+/// Path segments are normalized via [`Path::components`] so separator
+/// style differences across platforms do not affect route generation.
+/// The returned route is always absolute (starts with `/`).
 fn normalize_web_path(relative_path: &str) -> String {
     let normalized = Path::new(relative_path)
         .components()
         .filter_map(|component| match component {
             std::path::Component::Normal(segment) => segment.to_str(),
-            std::path::Component::CurDir
-            | std::path::Component::ParentDir
-            | std::path::Component::RootDir
-            | std::path::Component::Prefix(_) => None,
+            _ => None,
         })
         .collect::<Vec<_>>()
         .join("/");
     format!("/{normalized}")
+}
+
+/// Strip `.html`/`.htm` from an already-normalized web path in-place,
+/// and map `/index` to its parent directory route.
+fn strip_html_ext(path: &mut String) {
+    if path.ends_with(".html") {
+        path.truncate(path.len() - ".html".len());
+    } else if path.ends_with(".htm") {
+        path.truncate(path.len() - ".htm".len());
+    }
+
+    if path.ends_with("/index") {
+        path.truncate(path.len() - "index".len());
+    } else if path == "/index" {
+        path.truncate(1);
+    }
 }
