@@ -44,19 +44,26 @@ jobs:
 
   test:
     name: test / ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
         include:
           - name: stable
             rust: stable
+            os: ubuntu-latest
           - name: beta
             rust: beta
+            os: ubuntu-latest
           - name: nightly
             rust: nightly
+            os: ubuntu-latest
           - name: 1.88.0
             rust: 1.88.0
+            os: ubuntu-latest
+          - name: windows
+            rust: stable
+            os: windows-latest
 
     steps:
       - uses: actions/checkout@v6
