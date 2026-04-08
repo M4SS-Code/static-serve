@@ -790,11 +790,13 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<LitByteStr
 /// We accept the first guess because [`mime_guess` updates the order
 /// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
 fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<String, error::Error> {
-    let ext = path.extension().ok_or(if allow_unknown_extensions {
-        return Ok(mime_guess::mime::APPLICATION_OCTET_STREAM.to_string());
-    } else {
-        error::Error::UnknownFileExtension(None)
-    })?;
+    let Some(ext) = path.extension() else {
+        return if allow_unknown_extensions {
+            Ok(mime_guess::mime::APPLICATION_OCTET_STREAM.to_string())
+        } else {
+            Err(error::Error::UnknownFileExtension(None))
+        };
+    };
 
     let ext = ext
         .to_str()

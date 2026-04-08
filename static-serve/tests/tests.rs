@@ -1370,8 +1370,6 @@ async fn serves_unknown_extensions() {
     assert_eq!(&collected_body_bytes, &b"example.wtf");
 }
 
-// Reproducing Test. Expected to panic.
-#[should_panic(expected = "application/octet-stream")]
 #[tokio::test]
 async fn allow_unknown_extensions_must_retain_content_type_for_known_extensions() {
     // Given a router embedding assets with `allow_unknown_extensions = true` and a file with known
@@ -1388,7 +1386,7 @@ async fn allow_unknown_extensions_must_retain_content_type_for_known_extensions(
 
     // Then the content type must be `application/javascript`
     assert_eq!(
-        "application/javascript",
+        "text/javascript",
         response.headers().get("content-type").unwrap()
     );
 }
