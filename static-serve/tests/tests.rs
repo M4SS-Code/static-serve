@@ -1369,3 +1369,26 @@ async fn serves_unknown_extensions() {
         .to_vec();
     assert_eq!(&collected_body_bytes, &b"example.wtf");
 }
+
+// Reproducing Test. Expected to panic.
+#[should_panic(expected = "application/octet-stream")]
+#[tokio::test]
+async fn allow_unknown_extensions_must_retain_content_type_for_known_extensions() {
+    // Given a router embedding assets with `allow_unknown_extensions = true` and a file with known
+    // extensions (in this case, `app.js`)
+    embed_assets!(
+        "../static-serve/test_assets/small",
+        allow_unknown_extensions = true
+    );
+    let router: Router<()> = static_router();
+
+    // When requesting `.app.js` from the router
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+
+    // Then the content type must be `application/javascript`
+    assert_eq!(
+        "application/javascript",
+        response.headers().get("content-type").unwrap()
+    );
+}
