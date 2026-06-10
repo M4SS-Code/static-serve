@@ -20,7 +20,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-static-serve = "0.4"
+static-serve = "0.6"
 axum = "0.8"
 ```
 
@@ -105,21 +105,20 @@ The crate automatically handles:
 ## Example
 
 ```rust,ignore
-use axum::{Router, Server};
-use static_serve::{embed_assets, embed_asset};
+use axum::Router;
+use static_serve::{embed_asset, embed_assets};
+use tokio::net::TcpListener;
 
 embed_assets!("public", compress = true);
 
 #[tokio::main]
 async fn main() {
-    let router = static_router();
+    let router: Router<()> = static_router();
     let my_file_handler = embed_asset!("other_files/my_file.txt");
     let router = router.route("/other_files/my_file.txt", my_file_handler);
 
-    Server::bind(&"0.0.0.0:3000".parse().unwrap())
-        .serve(router.into_make_service())
-        .await
-        .unwrap();
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, router).await.unwrap();
 }
 ```
 
