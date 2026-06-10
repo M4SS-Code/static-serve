@@ -248,3 +248,20 @@ fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
         Err(unsatisfiable) => (resp_base, unsatisfiable).into_response(),
     }
 }
+
+/// Two files mapping to the same web path must fail the build instead of
+/// panicking at runtime when the `Router` is built. With
+/// `strip_html_ext = true`, `foo.html` and `foo.htm` both map to `/foo`.
+///
+/// This test lives here rather than in `static-serve-macro` because the
+/// expanded code references the `static_serve` and `axum` crates, which are
+/// only available to this crate's doctests.
+///
+/// ```compile_fail
+/// static_serve::embed_assets!(
+///     "../static-serve/test_collision",
+///     strip_html_ext = true
+/// );
+/// ```
+#[cfg(doctest)]
+mod duplicate_web_paths_must_fail_to_compile {}

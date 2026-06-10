@@ -2,6 +2,7 @@
 //! in a web server
 
 use std::{
+    collections::HashMap,
     convert::Into,
     fs,
     io::{self, Write},
@@ -523,6 +524,7 @@ fn generate_static_routes(
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut routes = Vec::new();
+    let mut seen_web_paths = HashMap::new();
     for entry in glob(&format!("{assets_dir_abs_str}/**/*")).map_err(Error::Pattern)? {
         let entry = entry.map_err(Error::Glob)?;
         let metadata = entry.metadata().map_err(Error::CannotGetMetadata)?;
@@ -568,6 +570,10 @@ fn generate_static_routes(
             allow_unknown_extensions,
         )?;
 
+        if let Some(web_path) = &entry_path {
+            check_duplicate_web_path(&mut seen_web_paths, web_path, entry_str)?;
+        }
+
         routes.push(quote! {
             router = ::static_serve::static_route(
                 router,
@@ -595,6 +601,27 @@ fn generate_static_routes(
             router
         }
     })
+}
+
+/// Record the web path claimed by `entry_str`, erroring if another file
+/// already claimed it.
+///
+/// Registering the same path twice would panic at runtime when the `Router`
+/// is built. This can happen with `strip_html_ext = true`, where files like
+/// `foo.html` and `foo.htm` both map to `/foo`.
+fn check_duplicate_web_path(
+    seen_web_paths: &mut HashMap<String, String>,
+    web_path: &str,
+    entry_str: &str,
+) -> Result<(), Error> {
+    match seen_web_paths.insert(web_path.to_owned(), entry_str.to_owned()) {
+        Some(first_file) => Err(Error::DuplicateWebPath {
+            web_path: web_path.to_owned(),
+            first_file,
+            second_file: entry_str.to_owned(),
+        }),
+        None => Ok(()),
+    }
 }
 
 fn generate_static_handler(

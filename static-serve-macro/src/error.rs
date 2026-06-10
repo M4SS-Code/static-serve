@@ -39,6 +39,12 @@ pub(crate) enum Error {
     CannotGetMetadata(#[source] io::Error),
     #[error("Cannot canonicalize directory for cache-busting")]
     CannotCanonicalizeCacheBustedDir(#[source] io::Error),
+    #[error("Multiple files map to the same web path {web_path}: {first_file} and {second_file}")]
+    DuplicateWebPath {
+        web_path: String,
+        first_file: String,
+        second_file: String,
+    },
 }
 
 struct UnknownFileExtension<'a>(Option<&'a OsStr>);
