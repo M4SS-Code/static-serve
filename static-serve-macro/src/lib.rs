@@ -772,8 +772,8 @@ fn write_to_zstd_encoder(
 }
 
 fn is_compression_significant(compressed_len: usize, contents_len: usize) -> bool {
-    let ninety_pct_original = contents_len / 10 * 9;
-    compressed_len < ninety_pct_original
+    // `compressed_len < contents_len * 0.9`, computed exactly in integers
+    compressed_len * 10 < contents_len * 9
 }
 
 fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<LitByteStr> {
@@ -854,5 +854,22 @@ fn strip_html_ext(path: &mut String) {
         path.truncate(path.len() - "index".len());
     } else if path == "/index" {
         path.truncate(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_compression_significant;
+
+    #[test]
+    fn compression_significance_threshold() {
+        // Exactly 90% of the original size is not significant
+        assert!(!is_compression_significant(90, 100));
+        assert!(is_compression_significant(89, 100));
+
+        // Sizes not divisible by 10 must not floor the threshold down:
+        // 90% of 19 is 17.1, so 17 is significant and 18 is not
+        assert!(is_compression_significant(17, 19));
+        assert!(!is_compression_significant(18, 19));
     }
 }
