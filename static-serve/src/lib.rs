@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 
-use std::convert::Infallible;
+use std::{convert::Infallible, future};
 
 use axum::{
     Router,
@@ -39,16 +39,19 @@ where
 {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
         let accept_encoding = parts.headers.get(ACCEPT_ENCODING);
         let accept_encoding = accept_encoding
             .and_then(|accept_encoding| accept_encoding.to_str().ok())
             .unwrap_or_default();
 
-        Ok(Self {
+        future::ready(Ok(Self {
             gzip: accept_encoding.contains("gzip"),
             zstd: accept_encoding.contains("zstd"),
-        })
+        }))
     }
 }
 
@@ -71,9 +74,12 @@ where
 {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
         let if_none_match = parts.headers.get(IF_NONE_MATCH).cloned();
-        Ok(Self(if_none_match))
+        future::ready(Ok(Self(if_none_match)))
     }
 }
 
