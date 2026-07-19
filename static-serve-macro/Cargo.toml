@@ -20,7 +20,7 @@ mime_guess = "2.0.5"
 proc-macro2 = "1.0"
 quote = "1.0"
 sha2 = "0.11"
-syn = { version = "2.0", default-features = false, features = ["parsing", "printing", "proc-macro"] }
+syn = { version = "3.0", default-features = false, features = ["parsing", "printing", "proc-macro"] }
 thiserror = "2.0.12"
 zstd = "0.13"
 
