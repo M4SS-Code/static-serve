@@ -487,6 +487,7 @@ fn parse_dirs(input: ParseStream) -> syn::Result<Vec<(PathBuf, Span)>> {
     Ok(dirs)
 }
 
+#[expect(clippy::too_many_lines)]
 fn generate_static_routes(
     assets_dir: &LitStr,
     ignore_paths: &IgnorePaths,
@@ -497,16 +498,22 @@ fn generate_static_routes(
 ) -> Result<TokenStream, error::Error> {
     let assets_dir_abs = Path::new(&assets_dir.value())
         .canonicalize()
-        .map_err(Error::CannotCanonicalizeDirectory)?;
+        .map_err(|error| Error::CannotCanonicalizeDirectory {
+            dir: assets_dir.value(),
+            error,
+        })?;
     let assets_dir_abs_str = assets_dir_abs
         .to_str()
-        .ok_or(Error::InvalidUnicodeInDirectoryName)?;
+        .ok_or_else(|| Error::InvalidUnicodeInDirectoryName(assets_dir_abs.clone()))?;
     let canon_ignore_paths = ignore_paths
         .0
         .iter()
         .map(|d| {
             d.canonicalize()
-                .map_err(Error::CannotCanonicalizeIgnorePath)
+                .map_err(|error| Error::CannotCanonicalizeIgnorePath {
+                    path: d.clone(),
+                    error,
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let canon_cache_busted_dirs = cache_busted_paths
@@ -514,20 +521,32 @@ fn generate_static_routes(
         .iter()
         .map(|d| {
             d.canonicalize()
-                .map_err(Error::CannotCanonicalizeCacheBustedDir)
+                .map_err(|error| Error::CannotCanonicalizeCacheBustedDir {
+                    dir: d.clone(),
+                    error,
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let canon_cache_busted_files = cache_busted_paths
         .files
         .iter()
-        .map(|file| file.canonicalize().map_err(Error::CannotCanonicalizeFile))
+        .map(|file| {
+            file.canonicalize()
+                .map_err(|error| Error::CannotCanonicalizeFile {
+                    entry: file.clone(),
+                    error,
+                })
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut routes = Vec::new();
     let mut seen_web_paths = HashMap::new();
     for entry in glob(&format!("{assets_dir_abs_str}/**/*")).map_err(Error::Pattern)? {
         let entry = entry.map_err(Error::Glob)?;
-        let metadata = entry.metadata().map_err(Error::CannotGetMetadata)?;
+        let metadata = entry.metadata().map_err(|error| Error::CannotGetMetadata {
+            entry: entry.clone(),
+            error,
+        })?;
         if metadata.is_dir() {
             continue;
         }
@@ -551,8 +570,10 @@ fn generate_static_routes(
 
         let entry = entry
             .canonicalize()
-            .map_err(Error::CannotCanonicalizeFile)?;
-        let entry_str = entry.to_str().ok_or(Error::FilePathIsNotUtf8)?;
+            .map_err(|error| Error::CannotCanonicalizeFile { entry, error })?;
+        let entry_str = entry
+            .to_str()
+            .ok_or_else(|| Error::FilePathIsNotUtf8(entry.clone()))?;
         let EmbeddedFileInfo {
             entry_path,
             content_type,
@@ -632,8 +653,13 @@ fn generate_static_handler(
 ) -> Result<TokenStream, error::Error> {
     let asset_file_abs = Path::new(&asset_file.value())
         .canonicalize()
-        .map_err(Error::CannotCanonicalizeFile)?;
-    let asset_file_abs_str = asset_file_abs.to_str().ok_or(Error::FilePathIsNotUtf8)?;
+        .map_err(|error| Error::CannotCanonicalizeFile {
+            entry: Path::new(&asset_file.value()).to_path_buf(),
+            error,
+        })?;
+    let asset_file_abs_str = asset_file_abs
+        .to_str()
+        .ok_or_else(|| Error::FilePathIsNotUtf8(asset_file_abs.clone()))?;
 
     let EmbeddedFileInfo {
         entry_path: _,
@@ -707,12 +733,15 @@ impl EmbeddedFileInfo {
         cache_busted: bool,
         allow_unknown_extensions: bool,
     ) -> Result<Self, Error> {
-        let contents = fs::read(pathbuf).map_err(Error::CannotReadEntryContents)?;
+        let contents = fs::read(pathbuf).map_err(|error| Error::CannotReadEntryContents {
+            entry: pathbuf.clone(),
+            error,
+        })?;
 
         // Optionally compress files
         let (maybe_gzip, maybe_zstd) = if should_compress.value {
-            let gzip = gzip_compress(&contents)?;
-            let zstd = zstd_compress(&contents)?;
+            let gzip = gzip_compress(&contents, pathbuf)?;
+            let zstd = zstd_compress(&contents, pathbuf)?;
             (gzip, zstd)
         } else {
             (None, None)
@@ -751,27 +780,32 @@ impl EmbeddedFileInfo {
     }
 }
 
-fn gzip_compress(contents: &[u8]) -> Result<Option<LitByteStr>, Error> {
+fn gzip_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Error> {
     let mut compressor = GzEncoder::new(Vec::new(), flate2::Compression::best());
-    compressor
-        .write_all(contents)
-        .map_err(|e| Error::Gzip(GzipType::CompressorWrite(e)))?;
-    let compressed = compressor
-        .finish()
-        .map_err(|e| Error::Gzip(GzipType::EncoderFinish(e)))?;
+    compressor.write_all(contents).map_err(|e| Error::Gzip {
+        entry: entry.to_path_buf(),
+        error: GzipType::CompressorWrite(e),
+    })?;
+    let compressed = compressor.finish().map_err(|e| Error::Gzip {
+        entry: entry.to_path_buf(),
+        error: GzipType::EncoderFinish(e),
+    })?;
 
     Ok(maybe_get_compressed(&compressed, contents))
 }
 
-fn zstd_compress(contents: &[u8]) -> Result<Option<LitByteStr>, Error> {
+fn zstd_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Error> {
     let level = *zstd::compression_level_range().end();
     let mut encoder = zstd::Encoder::new(Vec::new(), level).unwrap();
-    write_to_zstd_encoder(&mut encoder, contents)
-        .map_err(|e| Error::Zstd(ZstdType::EncoderWrite(e)))?;
+    write_to_zstd_encoder(&mut encoder, contents).map_err(|e| Error::Zstd {
+        entry: entry.to_path_buf(),
+        error: ZstdType::EncoderWrite(e),
+    })?;
 
-    let compressed = encoder
-        .finish()
-        .map_err(|e| Error::Zstd(ZstdType::EncoderFinish(e)))?;
+    let compressed = encoder.finish().map_err(|e| Error::Zstd {
+        entry: entry.to_path_buf(),
+        error: ZstdType::EncoderFinish(e),
+    })?;
 
     Ok(maybe_get_compressed(&compressed, contents))
 }

@@ -14,32 +14,64 @@ pub(crate) enum Error {
     UnknownFileExtension(Option<OsString>),
     #[error("File extension for file {} is not valid unicode", 0.to_string())]
     InvalidFileExtension(OsString),
-    #[error("Cannot canonicalize assets directory")]
-    CannotCanonicalizeDirectory(#[source] io::Error),
-    #[error("Cannot canonicalize asset file")]
-    CannotCanonicalizeFile(#[source] io::Error),
+    #[error("Cannot canonicalize assets directory {dir}: {error}")]
+    CannotCanonicalizeDirectory {
+        dir: String,
+        #[source]
+        error: io::Error,
+    },
+    #[error("Cannot canonicalize asset file {entry}: {error}")]
+    CannotCanonicalizeFile {
+        entry: PathBuf,
+        #[source]
+        error: io::Error,
+    },
     #[error("Cannot make file path {0} relative to directory")]
     CannotMakeFileRelative(PathBuf),
-    #[error("File path is not utf-8")]
-    FilePathIsNotUtf8,
-    #[error("Invalid unicode in directory name")]
-    InvalidUnicodeInDirectoryName,
-    #[error("Cannot canonicalize ignore path")]
-    CannotCanonicalizeIgnorePath(#[source] io::Error),
-    #[error("Error while compressing with gzip")]
-    Gzip(#[from] GzipType),
-    #[error("Error while compressing with zstd")]
-    Zstd(#[from] ZstdType),
-    #[error("Error while reading entry contents")]
-    CannotReadEntryContents(#[source] io::Error),
+    #[error("File path {0} is not utf-8")]
+    FilePathIsNotUtf8(PathBuf),
+    #[error("Invalid unicode in directory name {0}")]
+    InvalidUnicodeInDirectoryName(PathBuf),
+    #[error("Cannot canonicalize ignore path {path}: {error}")]
+    CannotCanonicalizeIgnorePath {
+        path: PathBuf,
+        #[source]
+        error: io::Error,
+    },
+    #[error("Error while compressing entry {entry} with gzip: {error}")]
+    Gzip {
+        entry: PathBuf,
+        #[source]
+        error: GzipType,
+    },
+    #[error("Error while compressing entry {entry} with zstd: {error}")]
+    Zstd {
+        entry: PathBuf,
+        #[source]
+        error: ZstdType,
+    },
+    #[error("Error while reading entry {entry} contents: {error}")]
+    CannotReadEntryContents {
+        entry: PathBuf,
+        #[source]
+        error: io::Error,
+    },
     #[error("Error while parsing glob pattern")]
     Pattern(#[source] PatternError),
-    #[error("Error reading path for glob")]
+    #[error("Error reading path for glob: {0}")]
     Glob(#[source] GlobError),
-    #[error("Cannot get entry metadata")]
-    CannotGetMetadata(#[source] io::Error),
-    #[error("Cannot canonicalize directory for cache-busting")]
-    CannotCanonicalizeCacheBustedDir(#[source] io::Error),
+    #[error("Cannot get entry {entry} metadata: {error}")]
+    CannotGetMetadata {
+        entry: PathBuf,
+        #[source]
+        error: io::Error,
+    },
+    #[error("Cannot canonicalize directory {dir} for cache-busting: {error}")]
+    CannotCanonicalizeCacheBustedDir {
+        dir: PathBuf,
+        #[source]
+        error: io::Error,
+    },
     #[error("Multiple files map to the same web path {web_path}: {first_file} and {second_file}")]
     DuplicateWebPath {
         web_path: String,
