@@ -722,12 +722,9 @@ impl EmbeddedFileInfo {
 
         // entry_path is only needed for the router (embed_assets!)
         let entry_path = if let Some(dir) = assets_dir_abs_str {
-            let relative_entry = pathbuf
-                .strip_prefix(dir)
-                .ok()
-                .and_then(|p| p.to_str())
-                .ok_or(Error::InvalidUnicodeInEntryName)?;
-            let mut web_path = normalize_web_path(relative_entry);
+            let relative_entry = pathdiff::diff_paths(pathbuf, dir)
+                .ok_or_else(|| Error::CannotMakeFileRelative(pathbuf.clone()))?;
+            let mut web_path = normalize_web_path(&relative_entry);
             if should_strip_html_ext.value && content_type == "text/html" {
                 strip_html_ext(&mut web_path);
             }
@@ -855,8 +852,8 @@ fn etag(contents: &[u8]) -> String {
 /// Path segments are normalized via [`Path::components`] so separator
 /// style differences across platforms do not affect route generation.
 /// The returned route is always absolute (starts with `/`).
-fn normalize_web_path(relative_path: &str) -> String {
-    let normalized = Path::new(relative_path)
+fn normalize_web_path(relative_path: &Path) -> String {
+    let normalized = relative_path
         .components()
         .filter_map(|component| match component {
             std::path::Component::Normal(segment) => segment.to_str(),

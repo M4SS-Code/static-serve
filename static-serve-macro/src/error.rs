@@ -2,6 +2,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::{Display, Formatter},
     io,
+    path::PathBuf,
 };
 
 use glob::{GlobError, PatternError};
@@ -17,14 +18,14 @@ pub(crate) enum Error {
     CannotCanonicalizeDirectory(#[source] io::Error),
     #[error("Cannot canonicalize asset file")]
     CannotCanonicalizeFile(#[source] io::Error),
+    #[error("Cannot make file path {0} relative to directory")]
+    CannotMakeFileRelative(PathBuf),
     #[error("File path is not utf-8")]
     FilePathIsNotUtf8,
     #[error("Invalid unicode in directory name")]
     InvalidUnicodeInDirectoryName,
     #[error("Cannot canonicalize ignore path")]
     CannotCanonicalizeIgnorePath(#[source] io::Error),
-    #[error("Invalid unicode in entry name")]
-    InvalidUnicodeInEntryName,
     #[error("Error while compressing with gzip")]
     Gzip(#[from] GzipType),
     #[error("Error while compressing with zstd")]
