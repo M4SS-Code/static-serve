@@ -405,7 +405,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "static-serve"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "axum",
  "bytes",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "static-serve-macro"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "display_full_error",
  "flate2",
