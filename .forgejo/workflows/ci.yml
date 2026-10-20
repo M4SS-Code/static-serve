@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  RUST_VERSION: 1.99.1
+
+concurrency:
+  group: ${{ forgejo.workflow }}-${{ forgejo.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    # The job containers on these runners are privileged, so never run them
+    # for code from a fork.
+    if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
+    name: rustfmt / 1.99.1
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: https://code.m4ss.net/Actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        uses: https://code.m4ss.net/Actions/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+
+      - name: cargo fmt
+        run: cargo fmt -- --check
+
+  clippy:
+    if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
+    name: clippy / 1.99.1
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: https://code.m4ss.net/Actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        uses: https://code.m4ss.net/Actions/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-features -- -D warnings
+
+  test:
+    if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
+    name: test / ${{ matrix.name }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        include:
+          - name: stable
+            rust: stable
+          - name: beta
+            rust: beta
+          - name: nightly
+            rust: nightly
+    steps:
+      - name: Checkout
+        uses: https://code.m4ss.net/Actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        uses: https://code.m4ss.net/Actions/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache
+        uses: https://code.m4ss.net/Actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ matrix.rust }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ matrix.rust }}-${{ runner.arch }}-
+
+      - name: cargo test
+        run: cargo test --locked
+
+  msrv:
+    # The minimum supported Rust version (Cargo.toml rust-version).
+    if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
+    name: msrv / 1.88.0
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: https://code.m4ss.net/Actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        uses: https://code.m4ss.net/Actions/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master
+        with:
+          toolchain: 1.88.0
+
+      - name: Cache
+        uses: https://code.m4ss.net/Actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-1.88.0-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-1.88.0-${{ runner.arch }}-
+
+      - name: cargo test
+        run: cargo test --locked
+
+  deny:
+    if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
+    name: cargo-deny
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: https://code.m4ss.net/Actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: cargo deny
+        uses: https://code.m4ss.net/Actions/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+        with:
+          arguments: --all-features
