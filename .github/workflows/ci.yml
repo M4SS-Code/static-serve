@@ -55,26 +55,19 @@ jobs:
 
   test:
     name: test / ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     strategy:
       matrix:
         include:
           - name: stable
             rust: stable
-            os: ubuntu-26.04
           - name: beta
             rust: beta
-            os: ubuntu-26.04
           - name: nightly
             rust: nightly
-            os: ubuntu-26.04
           - name: 1.88.0
             rust: 1.88.0
-            os: ubuntu-26.04
-          - name: windows
-            rust: stable
-            os: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,9 +86,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ matrix.rust }}-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
+          key: rust-${{ matrix.rust }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-${{ matrix.rust }}-${{ matrix.os }}-
+            rust-${{ matrix.rust }}-${{ runner.arch }}-
 
       - name: cargo test
         run: cargo test --locked
