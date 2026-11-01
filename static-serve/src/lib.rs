@@ -35,16 +35,45 @@ struct AcceptEncoding {
 
 impl AcceptEncoding {
     fn from_headers(headers: &HeaderMap) -> Self {
-        let accept_encoding = headers.get(ACCEPT_ENCODING);
-        let accept_encoding = accept_encoding
-            .and_then(|accept_encoding| accept_encoding.to_str().ok())
-            .unwrap_or_default();
+        let mut accept_encoding = Self {
+            gzip: false,
+            zstd: false,
+        };
 
-        Self {
-            gzip: accept_encoding.contains("gzip"),
-            zstd: accept_encoding.contains("zstd"),
+        let codings = headers
+            .get_all(ACCEPT_ENCODING)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','));
+        for coding in codings {
+            let (name, params) = coding.split_once(';').unwrap_or((coding, ""));
+            if is_refused(params) {
+                continue;
+            }
+
+            let name = name.trim();
+            if name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip") {
+                accept_encoding.gzip = true;
+            } else if name.eq_ignore_ascii_case("zstd") {
+                accept_encoding.zstd = true;
+            }
         }
+
+        accept_encoding
     }
+}
+
+/// Check if the parameters of an `Accept-Encoding` entry set `q` to zero
+fn is_refused(params: &str) -> bool {
+    params.split(';').any(|param| {
+        param.split_once('=').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("q")
+                && value
+                    .trim()
+                    .strip_prefix('0')
+                    .is_some_and(|rest| rest.trim_start_matches(['.', '0']).is_empty())
+        })
+    })
 }
 
 /// The values of every `If-None-Match` header in the request

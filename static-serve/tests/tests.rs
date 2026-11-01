@@ -1479,3 +1479,38 @@ async fn if_none_match_handles_wildcard_weak_tags_and_lists() {
         assert_eq!(response.status(), StatusCode::OK, "{value:?}");
     }
 }
+
+#[tokio::test]
+async fn accept_encoding_honors_refusals_and_multiple_fields() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let cases: [(&[&str], Option<&str>); 9] = [
+        (&["gzip;q=0"], None),
+        (&["zstd;q=0"], None),
+        (&["gzip ; Q=0.000, zstd;q=0."], None),
+        (&["zstd;q=0, gzip"], Some("gzip")),
+        (&["gzip;q=0.5"], Some("gzip")),
+        (&["x-gzip"], Some("gzip")),
+        (&["GZIP, ZSTD"], Some("zstd")),
+        (&["identity", "gzip"], Some("gzip")),
+        (&["notgzip, zstd-ish"], None),
+    ];
+    for (values, expected) in cases {
+        let mut request = Request::builder().uri("/app.js");
+        for value in values {
+            request = request.header(ACCEPT_ENCODING, *value);
+        }
+        let request = request.body(Body::empty()).unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_ENCODING)
+                .map(|value| value.to_str().unwrap()),
+            expected,
+            "{values:?}"
+        );
+    }
+}
