@@ -97,6 +97,7 @@ The crate automatically handles:
 
 - `Accept-Encoding` header to serve compressed versions if available
 - `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged. The uncompressed, gzip and zstd bodies of a file each have their own `ETag`
+- `If-Match` header, returning `412 Precondition Failed` if no entry matches the `ETag`
 
 - With the optional cache-bust headers feature, each embedded file in the `cache_busted_paths` array (or single file in the case of `embed_asset!` with `cache_bust = true`) will be returned with a `Cache-Control` header with the value `public, max-age=31536000, immutable`. Note: the files involved need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header.
 

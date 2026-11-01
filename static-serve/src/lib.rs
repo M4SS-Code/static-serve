@@ -9,7 +9,7 @@ use axum::{
         StatusCode,
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG,
-            HeaderMap, HeaderValue, IF_NONE_MATCH, VARY,
+            HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, VARY,
         },
         request::Parts,
     },
@@ -86,6 +86,40 @@ fn is_refused(params: &str) -> bool {
     })
 }
 
+/// Iterate over the entries of list-based entity-tag header values
+///
+/// Splitting on commas can't produce a false match against one of our own
+/// `ETag`s, even if an entry contains a comma, because a double quote can't
+/// appear inside a valid entity-tag.
+fn entity_tags(values: &[HeaderValue]) -> impl Iterator<Item = &[u8]> {
+    values
+        .iter()
+        .flat_map(|value| value.as_bytes().split(|&byte| byte == b','))
+        .map(<[u8]>::trim_ascii)
+}
+
+/// The values of every `If-Match` header in the request
+#[derive(Debug)]
+struct IfMatch(Vec<HeaderValue>);
+
+impl IfMatch {
+    fn from_headers(headers: &HeaderMap) -> Self {
+        let if_match = headers.get_all(IF_MATCH);
+        Self(if_match.iter().cloned().collect())
+    }
+
+    /// Check if the header is absent, or if `etag` is matched by `*` or by an
+    /// entry of the list
+    ///
+    /// `If-Match` uses strong comparison, so `W/` entries never match
+    /// (RFC 9110 section 13.1.1).
+    fn passes(&self, etag: &str) -> bool {
+        self.0.is_empty()
+            || entity_tags(&self.0)
+                .any(|candidate| candidate == b"*" || candidate == etag.as_bytes())
+    }
+}
+
 /// The values of every `If-None-Match` header in the request
 #[derive(Debug)]
 struct IfNoneMatch(Vec<HeaderValue>);
@@ -99,18 +133,12 @@ impl IfNoneMatch {
     /// Check if `etag` is matched by `*` or by an entry of the list
     ///
     /// `If-None-Match` uses weak comparison, so a `W/` prefix is ignored
-    /// (RFC 9110 section 13.1.2). Splitting on commas can't produce a false
-    /// match, even if another entity-tag contains one, because a quoted
-    /// `etag` can't appear inside a valid entity-tag.
+    /// (RFC 9110 section 13.1.2).
     fn matches(&self, etag: &str) -> bool {
-        self.0
-            .iter()
-            .flat_map(|value| value.as_bytes().split(|&byte| byte == b','))
-            .map(<[u8]>::trim_ascii)
-            .any(|candidate| {
-                candidate == b"*"
-                    || candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
-            })
+        entity_tags(&self.0).any(|candidate| {
+            candidate == b"*"
+                || candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
+        })
     }
 }
 
@@ -118,6 +146,7 @@ impl IfNoneMatch {
 #[derive(Debug)]
 struct StaticRequest {
     accept_encoding: AcceptEncoding,
+    if_match: IfMatch,
     if_none_match: IfNoneMatch,
     http_range: Option<HttpRange>,
     if_range: Option<IfRange>,
@@ -132,6 +161,7 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         Ok(Self {
             accept_encoding: AcceptEncoding::from_headers(&parts.headers),
+            if_match: IfMatch::from_headers(&parts.headers),
             if_none_match: IfNoneMatch::from_headers(&parts.headers),
             http_range: Option::from_request_parts(parts, state).await?,
             if_range: Option::from_request_parts(parts, state).await?,
@@ -191,6 +221,7 @@ fn static_inner(
 ) -> impl IntoResponse {
     let StaticRequest {
         accept_encoding,
+        if_match,
         if_none_match,
         http_range,
         if_range,
@@ -239,6 +270,10 @@ fn static_inner(
         ],
         optional_cache_control,
     );
+
+    if !if_match.passes(selected.etag) {
+        return (resp_base, StatusCode::PRECONDITION_FAILED).into_response();
+    }
 
     if if_none_match.matches(selected.etag) {
         return (resp_base, StatusCode::NOT_MODIFIED).into_response();

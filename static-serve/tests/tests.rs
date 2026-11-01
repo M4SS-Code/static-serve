@@ -1574,3 +1574,40 @@ async fn if_range_with_compressed_etag_serves_the_full_body() {
         *include_bytes!("../../test_fixtures/assets/dist/app.js.gz")
     );
 }
+
+#[tokio::test]
+async fn if_match_requires_a_strong_match() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let etag = response.headers().get("etag").unwrap().to_str().unwrap();
+
+    let cases = [
+        ("*".to_owned(), StatusCode::OK),
+        (etag.to_owned(), StatusCode::OK),
+        (format!("\"other\", {etag}"), StatusCode::OK),
+        ("\"other\"".to_owned(), StatusCode::PRECONDITION_FAILED),
+        (format!("W/{etag}"), StatusCode::PRECONDITION_FAILED),
+    ];
+    for (value, expected) in cases {
+        let request = Request::builder()
+            .uri("/app.js")
+            .header("if-match", &value)
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), expected, "{value:?}");
+    }
+
+    // A failed `If-Match` takes precedence over `If-None-Match`
+    let request = Request::builder()
+        .uri("/app.js")
+        .header("if-match", "\"other\"")
+        .header(IF_NONE_MATCH, etag)
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+}
