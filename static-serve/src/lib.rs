@@ -24,6 +24,16 @@ use range_requests::{
 
 pub use static_serve_macro::{embed_asset, embed_assets};
 
+/// An embedded body and its `ETag`
+///
+/// The bytes of each encoding differ, so a strong `ETag` must too.
+#[doc(hidden)]
+#[derive(Debug, Copy, Clone)]
+pub struct EmbeddedBody {
+    pub bytes: &'static [u8],
+    pub etag: &'static str,
+}
+
 /// The accept/reject status for gzip and zstd encoding
 #[derive(Debug, Copy, Clone)]
 struct AcceptEncoding {
@@ -147,16 +157,14 @@ where
 }
 
 #[doc(hidden)]
-#[expect(clippy::too_many_arguments)]
 /// The router for adding routes for static assets
 pub fn static_route<S>(
     router: Router<S>,
     web_path: &'static str,
     content_type: &'static str,
-    etag: &'static str,
-    body: &'static [u8],
-    body_gz: Option<&'static [u8]>,
-    body_zst: Option<&'static [u8]>,
+    body: EmbeddedBody,
+    body_gz: Option<EmbeddedBody>,
+    body_zst: Option<EmbeddedBody>,
     cache_busted: bool,
 ) -> Router<S>
 where
@@ -164,7 +172,7 @@ where
 {
     router.route(
         web_path,
-        static_method_router(content_type, etag, body, body_gz, body_zst, cache_busted),
+        static_method_router(content_type, body, body_gz, body_zst, cache_busted),
     )
 }
 
@@ -174,10 +182,9 @@ where
 /// Used by the `embed_asset!` macro, so it needs to be `pub`.
 pub fn static_method_router<S>(
     content_type: &'static str,
-    etag: &'static str,
-    body: &'static [u8],
-    body_gz: Option<&'static [u8]>,
-    body_zst: Option<&'static [u8]>,
+    body: EmbeddedBody,
+    body_gz: Option<EmbeddedBody>,
+    body_zst: Option<EmbeddedBody>,
     cache_busted: bool,
 ) -> MethodRouter<S>
 where
@@ -186,25 +193,16 @@ where
     MethodRouter::get(
         MethodRouter::new(),
         move |request: StaticRequest| async move {
-            static_inner(
-                content_type,
-                etag,
-                body,
-                body_gz,
-                body_zst,
-                cache_busted,
-                request,
-            )
+            static_inner(content_type, body, body_gz, body_zst, cache_busted, request)
         },
     )
 }
 
 fn static_inner(
     content_type: &'static str,
-    etag: &'static str,
-    body: &'static [u8],
-    body_gz: Option<&'static [u8]>,
-    body_zst: Option<&'static [u8]>,
+    body: EmbeddedBody,
+    body_gz: Option<EmbeddedBody>,
+    body_zst: Option<EmbeddedBody>,
     cache_busted: bool,
     request: StaticRequest,
 ) -> impl IntoResponse {
@@ -224,41 +222,42 @@ fn static_inner(
         None
     };
 
+    let (selected, optional_content_encoding) = match (
+        (accept_encoding.gzip, body_gz),
+        (accept_encoding.zstd, body_zst),
+    ) {
+        (_, (true, Some(body_zst))) => (
+            body_zst,
+            Some([(CONTENT_ENCODING, HeaderValue::from_static("zstd"))]),
+        ),
+        ((true, Some(body_gz)), _) => (
+            body_gz,
+            Some([(CONTENT_ENCODING, HeaderValue::from_static("gzip"))]),
+        ),
+        _ => (body, None),
+    };
+    let selected_body = Bytes::from_static(selected.bytes);
+
     let resp_base = (
         [
-            (ETAG, HeaderValue::from_static(etag)),
+            (ETAG, HeaderValue::from_static(selected.etag)),
             (VARY, HeaderValue::from_static("Accept-Encoding")),
         ],
         optional_cache_control,
     );
 
-    if if_none_match.matches(etag) {
+    if if_none_match.matches(selected.etag) {
         return (resp_base, StatusCode::NOT_MODIFIED).into_response();
     }
 
-    let (selected_body, optional_content_encoding) = match (
-        (accept_encoding.gzip, body_gz),
-        (accept_encoding.zstd, body_zst),
-    ) {
-        (_, (true, Some(body_zst))) => (
-            Bytes::from_static(body_zst),
-            Some([(CONTENT_ENCODING, HeaderValue::from_static("zstd"))]),
-        ),
-        ((true, Some(body_gz)), _) => (
-            Bytes::from_static(body_gz),
-            Some([(CONTENT_ENCODING, HeaderValue::from_static("gzip"))]),
-        ),
-        _ => (Bytes::from_static(body), None),
-    };
-
     // Only the uncompressed body can be ranged: a slice of a compressed stream
-    // can't be decoded on its own, and a slice of the uncompressed body can't
-    // be appended to a compressed one. RFC 9110 section 14.2 lets us ignore
-    // `Range` instead.
+    // can't be decoded on its own, and answering with uncompressed bytes under
+    // a different `ETag` would make the outcome of the preconditions above
+    // depend on `Range`. RFC 9110 section 14.2 lets us ignore `Range` instead.
     let is_identity = optional_content_encoding.is_none();
     let http_range = match (http_range.filter(|_| is_identity), if_range) {
         (Some(range), Some(if_range)) => {
-            let etag_value = HeaderValue::from_static(etag);
+            let etag_value = HeaderValue::from_static(selected.etag);
             if_range.evaluate(range, None, Some(&etag_value))
         }
         (range, _) => range,
