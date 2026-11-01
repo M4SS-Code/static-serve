@@ -585,22 +585,24 @@ fn generate_static_routes(
         }
 
         routes.push(quote! {
-            router = ::static_serve::static_route(
-                router,
-                #entry_path,
-                #content_type,
-                #etag_str,
-                {
-                    // Poor man's `tracked_path`
-                    // https://github.com/rust-lang/rust/issues/99515
-                    const _: &[u8] = include_bytes!(#entry_str);
-                        #lit_byte_str_contents
-                },
-                #maybe_gzip,
-                #maybe_zstd,
-                #cache_busted
-            );
-        });
+                    router = ::static_serve::static_route(
+                        router,
+                        #entry_path,
+                        #content_type,
+                        ::static_serve::EmbeddedBody {
+         bytes: {
+                            // Poor man's `tracked_path`
+                            // https://github.com/rust-lang/rust/issues/99515
+                            const _: &[u8] = include_bytes!(#entry_str);
+                                #lit_byte_str_contents
+                        },
+         etag: #etag_str,
+        },
+                        #maybe_gzip,
+                        #maybe_zstd,
+                        #cache_busted
+                    );
+                });
     }
 
     Ok(quote! {
@@ -671,29 +673,37 @@ fn generate_static_handler(
     )?;
 
     let route = quote! {
-        ::static_serve::static_method_router(
-            #content_type,
-            #etag_str,
-            {
-                // Poor man's `tracked_path`
-                // https://github.com/rust-lang/rust/issues/99515
-                const _: &[u8] = include_bytes!(#asset_file_abs_str);
-                #lit_byte_str_contents
-            },
-            #maybe_gzip,
-            #maybe_zstd,
-            #cache_busted
-        )
-    };
+            ::static_serve::static_method_router(
+                #content_type,
+                ::static_serve::EmbeddedBody {
+     bytes: {
+                    // Poor man's `tracked_path`
+                    // https://github.com/rust-lang/rust/issues/99515
+                    const _: &[u8] = include_bytes!(#asset_file_abs_str);
+                    #lit_byte_str_contents
+                },
+     etag: #etag_str,
+    },
+                #maybe_gzip,
+                #maybe_zstd,
+                #cache_busted
+            )
+        };
 
     Ok(route)
 }
 
-struct OptionBytesSlice(Option<LitByteStr>);
-impl ToTokens for OptionBytesSlice {
+/// A compressed body, if worth serving, and the `ETag` of its bytes
+struct OptionCompressedBody(Option<(LitByteStr, String)>);
+impl ToTokens for OptionCompressedBody {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(if let Some(inner) = &self.0.as_ref() {
-            quote! { ::std::option::Option::Some(#inner) }
+        tokens.extend(if let Some((body, etag)) = &self.0 {
+            quote! {
+                ::std::option::Option::Some(::static_serve::EmbeddedBody {
+                    bytes: #body,
+                    etag: #etag,
+                })
+            }
         } else {
             quote! { ::std::option::Option::None }
         });
@@ -708,8 +718,8 @@ struct EmbeddedFileInfo {
     content_type: String,
     etag_str: String,
     lit_byte_str_contents: LitByteStr,
-    maybe_gzip: OptionBytesSlice,
-    maybe_zstd: OptionBytesSlice,
+    maybe_gzip: OptionCompressedBody,
+    maybe_zstd: OptionCompressedBody,
     cache_busted: bool,
 }
 
@@ -754,8 +764,8 @@ impl EmbeddedFileInfo {
 
         let etag_str = etag(&contents);
         let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
-        let maybe_gzip = OptionBytesSlice(maybe_gzip);
-        let maybe_zstd = OptionBytesSlice(maybe_zstd);
+        let maybe_gzip = OptionCompressedBody(maybe_gzip);
+        let maybe_zstd = OptionCompressedBody(maybe_zstd);
 
         Ok(Self {
             entry_path,
@@ -769,7 +779,7 @@ impl EmbeddedFileInfo {
     }
 }
 
-fn gzip_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Error> {
+fn gzip_compress(contents: &[u8], entry: &Path) -> Result<Option<(LitByteStr, String)>, Error> {
     let mut compressor = GzEncoder::new(Vec::new(), flate2::Compression::best());
     compressor.write_all(contents).map_err(|e| Error::Gzip {
         entry: entry.to_path_buf(),
@@ -783,7 +793,7 @@ fn gzip_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Er
     Ok(maybe_get_compressed(&compressed, contents))
 }
 
-fn zstd_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Error> {
+fn zstd_compress(contents: &[u8], entry: &Path) -> Result<Option<(LitByteStr, String)>, Error> {
     let level = *zstd::compression_level_range().end();
     let mut encoder = zstd::Encoder::new(Vec::new(), level).unwrap();
     write_to_zstd_encoder(&mut encoder, contents).map_err(|e| Error::Zstd {
@@ -823,9 +833,13 @@ fn is_compression_significant(compressed_len: usize, contents_len: usize) -> boo
     compressed_len * 10 < contents_len * 9
 }
 
-fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<LitByteStr> {
-    is_compression_significant(compressed.len(), contents.len())
-        .then(|| LitByteStr::new(compressed, Span::call_site()))
+fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<(LitByteStr, String)> {
+    is_compression_significant(compressed.len(), contents.len()).then(|| {
+        (
+            LitByteStr::new(compressed, Span::call_site()),
+            etag(compressed),
+        )
+    })
 }
 
 /// Use `mime_guess` to get the best guess of the file's MIME type

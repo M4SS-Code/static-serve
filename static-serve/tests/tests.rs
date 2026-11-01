@@ -1514,3 +1514,63 @@ async fn accept_encoding_honors_refusals_and_multiple_fields() {
         );
     }
 }
+
+#[tokio::test]
+async fn each_encoding_has_its_own_etag() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let mut etags = Vec::new();
+    for compression in [Compression::None, Compression::Gzip, Compression::Zstd] {
+        let request = create_request("/app.js", &compression);
+        let response = get_response(router.clone(), request).await;
+        let etag = response.headers().get("etag").unwrap().clone();
+
+        // A revalidation of the same encoding gets the same `ETag` back
+        let mut request = create_request("/app.js", &compression);
+        request.headers_mut().insert(IF_NONE_MATCH, etag.clone());
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(response.headers().get("etag"), Some(&etag));
+
+        // Another encoding is a different representation
+        let mut request = create_request("/app.js", &Compression::None);
+        if !matches!(compression, Compression::None) {
+            request.headers_mut().insert(IF_NONE_MATCH, etag.clone());
+            let response = get_response(router.clone(), request).await;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        etags.push(etag);
+    }
+
+    assert_ne!(etags[0], etags[1]);
+    assert_ne!(etags[0], etags[2]);
+    assert_ne!(etags[1], etags[2]);
+}
+
+#[tokio::test]
+async fn if_range_with_compressed_etag_serves_the_full_body() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let request = create_request("/app.js", &Compression::Gzip);
+    let response = get_response(router.clone(), request).await;
+    let etag = response.headers().get("etag").unwrap().clone();
+
+    let mut request = create_request("/app.js", &Compression::Gzip);
+    request
+        .headers_mut()
+        .insert(RANGE, HeaderValue::from_static("bytes=0-1"));
+    request.headers_mut().insert(IF_RANGE, etag.clone());
+    let response = get_response(router, request).await;
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::OK);
+    assert_eq!(parts.headers.get(CONTENT_ENCODING).unwrap(), "gzip");
+    assert_eq!(parts.headers.get("etag"), Some(&etag));
+    let body = body.into_data_stream().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        *body,
+        *include_bytes!("../../test_fixtures/assets/dist/app.js.gz")
+    );
+}
