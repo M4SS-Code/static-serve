@@ -3,9 +3,9 @@ use std::io::Read;
 
 use axum::{
     Router,
-    body::Body,
+    body::{Body, HttpBody},
     http::{
-        HeaderValue, Request, Response, StatusCode,
+        HeaderValue, Method, Request, Response, StatusCode,
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_MATCH, IF_NONE_MATCH, IF_RANGE,
             RANGE,
@@ -304,13 +304,6 @@ async fn handles_conditional_requests_same_etag() {
     let response = get_response(router, request).await;
     let (parts, body) = response.into_parts();
     assert_eq!(parts.status, StatusCode::NOT_MODIFIED);
-    assert_eq!(
-        parts
-            .headers
-            .get("content-length")
-            .expect("no content-length header!"),
-        "0"
-    );
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     assert!(collected_body_bytes.is_empty());
 }
@@ -554,13 +547,6 @@ async fn handles_one_file_same_etag_with_cache_control() {
     let response = get_response(router, request).await;
     let (parts, body) = response.into_parts();
     assert_eq!(parts.status, StatusCode::NOT_MODIFIED);
-    assert_eq!(
-        parts
-            .headers
-            .get("content-length")
-            .expect("no content-length header!"),
-        "0"
-    );
     assert!(
         parts
             .headers
@@ -701,13 +687,6 @@ async fn handles_one_file_same_etag_no_cache_control() {
     let response = get_response(router, request).await;
     let (parts, body) = response.into_parts();
     assert_eq!(parts.status, StatusCode::NOT_MODIFIED);
-    assert_eq!(
-        parts
-            .headers
-            .get("content-length")
-            .expect("no content-length header!"),
-        "0"
-    );
     assert!(parts.headers.get("cache-control").is_none());
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -1671,4 +1650,34 @@ async fn precondition_failed_is_not_cacheable() {
     assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
     assert!(!response.headers().contains_key("cache-control"));
     assert!(!response.headers().contains_key("content-type"));
+}
+
+#[tokio::test]
+async fn not_modified_describes_the_200_and_has_an_empty_body() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let request = create_request("/app.js", &Compression::Gzip);
+    let response = get_response(router.clone(), request).await;
+    let etag = response.headers().get("etag").unwrap().clone();
+    let content_length = response.headers().get("content-length").unwrap().clone();
+
+    for method in [Method::GET, Method::HEAD] {
+        let request = Request::builder()
+            .method(method)
+            .uri("/app.js")
+            .header(ACCEPT_ENCODING, "gzip")
+            .header(IF_NONE_MATCH, &etag)
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            response.headers().get("content-length"),
+            Some(&content_length)
+        );
+        // Compression middleware skips bodies of an exact, small size. A body
+        // of unknown size made it compress the 304, which breaks HTTP/2.
+        assert_eq!(response.body().size_hint().exact(), Some(0));
+    }
 }

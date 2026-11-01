@@ -8,8 +8,8 @@ use axum::{
     http::{
         StatusCode,
         header::{
-            ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG,
-            HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, VARY,
+            ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
+            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, VARY,
         },
         request::Parts,
     },
@@ -278,7 +278,22 @@ fn static_inner(
     let resp_base = (validators, optional_cache_control);
 
     if if_none_match.matches(selected.etag) {
-        return (resp_base, StatusCode::NOT_MODIFIED).into_response();
+        // RFC 9110 section 8.6 only lets a 304 carry the Content-Length the
+        // 200 would have, so send that one. Without it, axum derives
+        // `Content-Length: 0` from the empty body: hyper drops that from
+        // HTTP/1.1 304s to GET, as it drops this value, but keeps it on
+        // HTTP/2 and in responses to HEAD. Omitting the header altogether
+        // would need a body without an exact size, which compression
+        // middleware such as tower-http's would then wrap; an exact size of
+        // 0 makes it leave the 304 alone.
+        let content_length = HeaderValue::from(selected_body.len());
+        return (
+            StatusCode::NOT_MODIFIED,
+            [(CONTENT_LENGTH, content_length)],
+            resp_base,
+            (),
+        )
+            .into_response();
     }
 
     // Only the uncompressed body can be ranged: a slice of a compressed stream
