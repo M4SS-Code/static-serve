@@ -47,21 +47,48 @@ impl AcceptEncoding {
     }
 }
 
-/// Check if the  `IfNoneMatch` header is present
+/// Iterate over the entries of list-based entity-tag header values
+///
+/// Splitting on commas can't produce a false match against one of our own
+/// `ETag`s, even if an entry contains a comma, because a double quote can't
+/// appear inside a valid entity-tag.
+fn entity_tags(values: &[HeaderValue]) -> impl Iterator<Item = &[u8]> {
+    values
+        .iter()
+        .flat_map(|value| value.as_bytes().split(|&byte| byte == b','))
+        .map(<[u8]>::trim_ascii)
+}
+
+/// Check if a field is the `*` wildcard
+///
+/// The grammar is `"*" / #entity-tag` for the whole field value, which
+/// combines every field line (RFC 9110 section 5.3). So `*` is only the
+/// wildcard as the single field line: next to other values the field is
+/// invalid, and looking for it among the entries of [`entity_tags`] would
+/// also find it in a tag like `"a,*,b"`.
+fn is_wildcard(values: &[HeaderValue]) -> bool {
+    matches!(values, [value] if value.as_bytes().trim_ascii() == b"*")
+}
+
+/// The values of every `If-None-Match` header in the request
 #[derive(Debug)]
-struct IfNoneMatch(Option<HeaderValue>);
+struct IfNoneMatch(Vec<HeaderValue>);
 
 impl IfNoneMatch {
     fn from_headers(headers: &HeaderMap) -> Self {
-        let if_none_match = headers.get(IF_NONE_MATCH).cloned();
-        Self(if_none_match)
+        let if_none_match = headers.get_all(IF_NONE_MATCH);
+        Self(if_none_match.iter().cloned().collect())
     }
 
-    /// required function for checking if `IfNoneMatch` is present
+    /// Check if `etag` is matched by `*` or by an entry of the list
+    ///
+    /// `If-None-Match` uses weak comparison, so a `W/` prefix is ignored
+    /// (RFC 9110 section 13.1.2).
     fn matches(&self, etag: &str) -> bool {
-        self.0
-            .as_ref()
-            .is_some_and(|if_none_match| if_none_match.as_bytes() == etag.as_bytes())
+        is_wildcard(&self.0)
+            || entity_tags(&self.0).any(|candidate| {
+                candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
+            })
     }
 }
 
