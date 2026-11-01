@@ -170,7 +170,6 @@ fn static_inner(
 
     let resp_base = (
         [
-            (CONTENT_TYPE, HeaderValue::from_static(content_type)),
             (ETAG, HeaderValue::from_static(etag)),
             (VARY, HeaderValue::from_static("Accept-Encoding")),
         ],
@@ -182,7 +181,10 @@ fn static_inner(
     }
 
     let resp_base = (
-        [(ACCEPT_RANGES, HeaderValue::from_static("bytes"))],
+        [
+            (CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (ACCEPT_RANGES, HeaderValue::from_static("bytes")),
+        ],
         resp_base,
     );
 
