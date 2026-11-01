@@ -1414,3 +1414,30 @@ async fn allow_unknown_extensions_must_retain_content_type_for_known_extensions(
         response.headers().get("content-type").unwrap()
     );
 }
+
+#[tokio::test]
+async fn not_modified_keeps_cache_headers_and_drops_content_type() {
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/big",
+        compress = true,
+        cache_busted_paths = ["app.js"]
+    );
+    let router: Router<()> = static_router();
+
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let etag = response.headers().get("etag").unwrap().clone();
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_NONE_MATCH, &etag)
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    let (parts, _body) = response.into_parts();
+    assert_eq!(parts.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(parts.headers.get("etag"), Some(&etag));
+    assert_eq!(parts.headers.get("vary").unwrap(), "Accept-Encoding");
+    assert!(parts.headers.get("cache-control").is_some());
+    assert!(parts.headers.get("content-type").is_none());
+}
