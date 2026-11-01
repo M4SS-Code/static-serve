@@ -47,21 +47,31 @@ impl AcceptEncoding {
     }
 }
 
-/// Check if the  `IfNoneMatch` header is present
+/// The values of every `If-None-Match` header in the request
 #[derive(Debug)]
-struct IfNoneMatch(Option<HeaderValue>);
+struct IfNoneMatch(Vec<HeaderValue>);
 
 impl IfNoneMatch {
     fn from_headers(headers: &HeaderMap) -> Self {
-        let if_none_match = headers.get(IF_NONE_MATCH).cloned();
-        Self(if_none_match)
+        let if_none_match = headers.get_all(IF_NONE_MATCH);
+        Self(if_none_match.iter().cloned().collect())
     }
 
-    /// required function for checking if `IfNoneMatch` is present
+    /// Check if `etag` is matched by `*` or by an entry of the list
+    ///
+    /// `If-None-Match` uses weak comparison, so a `W/` prefix is ignored
+    /// (RFC 9110 section 13.1.2). Splitting on commas can't produce a false
+    /// match, even if another entity-tag contains one, because a quoted
+    /// `etag` can't appear inside a valid entity-tag.
     fn matches(&self, etag: &str) -> bool {
         self.0
-            .as_ref()
-            .is_some_and(|if_none_match| if_none_match.as_bytes() == etag.as_bytes())
+            .iter()
+            .flat_map(|value| value.as_bytes().split(|&byte| byte == b','))
+            .map(<[u8]>::trim_ascii)
+            .any(|candidate| {
+                candidate == b"*"
+                    || candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
+            })
     }
 }
 

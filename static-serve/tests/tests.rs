@@ -1441,3 +1441,41 @@ async fn not_modified_keeps_cache_headers_and_drops_content_type() {
     assert!(parts.headers.get("cache-control").is_some());
     assert!(parts.headers.get("content-type").is_none());
 }
+
+#[tokio::test]
+async fn if_none_match_handles_wildcard_weak_tags_and_lists() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let etag = response.headers().get("etag").unwrap().to_str().unwrap();
+
+    let matching: [&[String]; 5] = [
+        &["*".to_owned()],
+        &[format!("W/{etag}")],
+        &[format!("\"other\", {etag}")],
+        &[format!("\"other\",W/{etag}")],
+        &["\"other\"".to_owned(), etag.to_owned()],
+    ];
+    for values in matching {
+        let mut request = Request::builder().uri("/app.js");
+        for value in values {
+            request = request.header(IF_NONE_MATCH, value);
+        }
+        let request = request.body(Body::empty()).unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED, "{values:?}");
+    }
+
+    let not_matching = ["\"other\", W/\"another\"", "\"other, *\"", "W/*"];
+    for value in not_matching {
+        let request = Request::builder()
+            .uri("/app.js")
+            .header(IF_NONE_MATCH, value)
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), StatusCode::OK, "{value:?}");
+    }
+}
