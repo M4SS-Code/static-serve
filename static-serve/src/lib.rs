@@ -8,8 +8,8 @@ use axum::{
     http::{
         StatusCode,
         header::{
-            ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG,
-            HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, VARY,
+            ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
+            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, VARY,
         },
         request::Parts,
     },
@@ -276,7 +276,18 @@ fn static_inner(
     }
 
     if if_none_match.matches(selected.etag) {
-        return (resp_base, StatusCode::NOT_MODIFIED).into_response();
+        // The explicit length keeps axum from deriving `Content-Length: 0`
+        // from the empty body, which would misdescribe the 200 response
+        // (RFC 9110 section 8.6). Middleware reads the exact body size of 0,
+        // so it won't try to compress the 304.
+        let content_length = HeaderValue::from(selected_body.len());
+        return (
+            StatusCode::NOT_MODIFIED,
+            [(CONTENT_LENGTH, content_length)],
+            resp_base,
+            (),
+        )
+            .into_response();
     }
 
     let resp_base = (
