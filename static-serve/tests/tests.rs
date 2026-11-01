@@ -7,7 +7,8 @@ use axum::{
     http::{
         HeaderValue, Request, Response, StatusCode,
         header::{
-            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_NONE_MATCH, IF_RANGE, RANGE,
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_MATCH, IF_NONE_MATCH, IF_RANGE,
+            RANGE,
         },
     },
 };
@@ -1274,9 +1275,16 @@ async fn range_is_ignored_when_a_compressed_body_is_selected() {
     let mut request = create_request("/app.js", &Compression::Zstd);
     let headers = request.headers_mut();
     headers.insert(RANGE, HeaderValue::from_static("bytes=0-4"));
-    headers.insert(IF_NONE_MATCH, etag);
-    let response = get_response(router, request).await;
+    headers.insert(IF_NONE_MATCH, etag.clone());
+    let response = get_response(router.clone(), request).await;
     assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+
+    let mut request = create_request("/app.js", &Compression::Zstd);
+    let headers = request.headers_mut();
+    headers.insert(RANGE, HeaderValue::from_static("bytes=0-4"));
+    headers.insert(IF_MATCH, etag);
+    let response = get_response(router, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -1495,13 +1503,18 @@ async fn entity_tag_containing_a_star_is_not_a_wildcard() {
     embed_assets!("../static-serve/test_fixtures/assets/big", compress = false);
     let router: Router<()> = static_router();
 
-    let request = Request::builder()
-        .uri("/app.js")
-        .header(IF_NONE_MATCH, "\"a,*,b\"")
-        .body(Body::empty())
-        .unwrap();
-    let response = get_response(router, request).await;
-    assert_eq!(response.status(), StatusCode::OK);
+    for (header, status) in [
+        (IF_NONE_MATCH, StatusCode::OK),
+        (IF_MATCH, StatusCode::PRECONDITION_FAILED),
+    ] {
+        let request = Request::builder()
+            .uri("/app.js")
+            .header(header, "\"a,*,b\"")
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), status);
+    }
 }
 
 #[tokio::test]
@@ -1597,4 +1610,65 @@ async fn if_range_with_compressed_etag_serves_the_full_body() {
         *body,
         *include_bytes!("../../test_fixtures/assets/dist/app.js.gz")
     );
+}
+
+#[tokio::test]
+async fn if_match_requires_a_strong_match() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let request = create_request("/app.js", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    let etag = response.headers().get("etag").unwrap().to_str().unwrap();
+
+    let cases: [(&[String], StatusCode); 6] = [
+        (&["*".to_owned()], StatusCode::OK),
+        (&[etag.to_owned()], StatusCode::OK),
+        (&[format!("\"other\", {etag}")], StatusCode::OK),
+        (&["\"other\"".to_owned()], StatusCode::PRECONDITION_FAILED),
+        (&[format!("W/{etag}")], StatusCode::PRECONDITION_FAILED),
+        // `*` is only the wildcard as the whole field value
+        (
+            &["\"other\"".to_owned(), "*".to_owned()],
+            StatusCode::PRECONDITION_FAILED,
+        ),
+    ];
+    for (values, expected) in cases {
+        let mut request = Request::builder().uri("/app.js");
+        for value in values {
+            request = request.header(IF_MATCH, value);
+        }
+        let request = request.body(Body::empty()).unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), expected, "{values:?}");
+    }
+
+    // A failed `If-Match` takes precedence over `If-None-Match`
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_MATCH, "\"other\"")
+        .header(IF_NONE_MATCH, etag)
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+}
+
+#[tokio::test]
+async fn precondition_failed_is_not_cacheable() {
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/big",
+        cache_busted_paths = ["immutable"]
+    );
+    let router: Router<()> = static_router();
+
+    let request = Request::builder()
+        .uri("/immutable/app.js")
+        .header(IF_MATCH, "\"stale\"")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    assert!(!response.headers().contains_key("cache-control"));
+    assert!(!response.headers().contains_key("content-type"));
 }
