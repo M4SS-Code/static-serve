@@ -1476,7 +1476,7 @@ async fn accept_encoding_honors_refusals_and_multiple_fields() {
     embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
 
-    let cases: [(&[&str], Option<&str>); 9] = [
+    let cases: [(&[&str], Option<&str>); 19] = [
         (&["gzip;q=0"], None),
         (&["zstd;q=0"], None),
         (&["gzip ; Q=0.000, zstd;q=0."], None),
@@ -1486,6 +1486,16 @@ async fn accept_encoding_honors_refusals_and_multiple_fields() {
         (&["GZIP, ZSTD"], Some("zstd")),
         (&["identity", "gzip"], Some("gzip")),
         (&["notgzip, zstd-ish"], None),
+        (&["gzip;q=1, zstd;q=0.1"], Some("gzip")),
+        (&["gzip;q=0.1, zstd;q=0.1"], Some("zstd")),
+        (&["gzip;q=0.5, identity;q=1"], None),
+        (&["gzip, identity"], Some("gzip")),
+        (&["*"], Some("zstd")),
+        (&["*;q=0"], None),
+        (&["gzip;q=0, *"], Some("zstd")),
+        (&["*, zstd;q=0"], Some("gzip")),
+        (&["*, identity;q=0"], Some("zstd")),
+        (&["identity;q=1, *;q=0"], None),
     ];
     for (values, expected) in cases {
         let mut request = Request::builder().uri("/app.js");
