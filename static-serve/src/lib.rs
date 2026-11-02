@@ -286,6 +286,7 @@ fn static_inner(
         None
     };
 
+    let has_compressed_body = body_gz.is_some() || body_zst.is_some();
     let (selected, optional_content_encoding) = match accept_encoding.select(body_gz, body_zst) {
         Some((compressed, coding)) => (
             compressed,
@@ -295,10 +296,12 @@ fn static_inner(
     };
     let selected_body = Bytes::from_static(selected.bytes);
 
-    let validators = [
-        (ETAG, HeaderValue::from_static(selected.etag)),
-        (VARY, HeaderValue::from_static("Accept-Encoding")),
-    ];
+    // Without a compressed body the response doesn't depend on `Accept-Encoding`,
+    // and listing it would only split the entries of shared caches.
+    let validators = (
+        [(ETAG, HeaderValue::from_static(selected.etag))],
+        has_compressed_body.then_some([(VARY, HeaderValue::from_static("Accept-Encoding"))]),
+    );
 
     // Cache-Control stays off 412 and 416: without it they can't be stored,
     // while with it a cache could answer later requests with the empty error.
