@@ -24,7 +24,15 @@ mod error;
 use error::{Error, GzipType, ZstdType};
 
 #[proc_macro]
-/// Embed and optionally compress static assets for a web server
+/// Embed and optionally compress a directory of static assets for a web server
+///
+/// Generates a `pub fn static_router<S>() -> axum::Router<S>` in the current
+/// scope, with one route per file. The path is relative to the directory
+/// containing `Cargo.toml`.
+///
+/// The options are `compress`, `ignore_paths`, `strip_html_ext`,
+/// `cache_busted_paths` and `allow_unknown_extensions`. See the
+/// [`static-serve` documentation](https://docs.rs/static-serve) for details.
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
     quote! { #parsed }.into()
@@ -32,6 +40,12 @@ pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 #[proc_macro]
 /// Embed and optionally compress a single static asset for a web server
+///
+/// Evaluates to an `axum::routing::MethodRouter` serving GET and HEAD. The path
+/// is relative to the directory containing `Cargo.toml`.
+///
+/// The options are `compress`, `cache_bust` and `allow_unknown_extensions`. See
+/// the [`static-serve` documentation](https://docs.rs/static-serve) for details.
 pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAsset);
     quote! { #parsed }.into()

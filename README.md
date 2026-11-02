@@ -10,7 +10,7 @@ A Rust library for compressing and embedding static assets in a web server using
 
 - **ETag support** for conditional requests and caching
 
-- **HTTP Range Requests** for partial content responses (RFC 7233)
+- **HTTP Range Requests** for partial content responses (RFC 9110)
 
 - **Seamless Axum integration** with request extraction for encoding and caching headers
 
@@ -31,10 +31,12 @@ axum = "0.8"
 Use the `embed_assets!` macro to create a `static_router()` function in scope which will include your static files, embedding them into your binary:
 
 ```rust,ignore
+use axum::Router;
 use static_serve::embed_assets;
 
 embed_assets!("assets", compress = true, ignore_paths = ["temp.txt","temp"], cache_busted_paths = ["immutable"]);
-let router = static_router();
+
+let router: Router<()> = static_router();
 ```
 
 This will:
@@ -54,15 +56,35 @@ This will:
 
 - `ignore_paths = ["my_ignore_dir", "other_ignore_dir", "my_ignore_file.txt"]` - a bracketed list of `&str`s of paths/subdirectories/files inside the target directory, which should be ignored and not included. (If this parameter is missing, no paths/subdirectories/files will be ignored)
 
-- `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, leaving just the root (defaults to false)
+- `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, so `index.html` is served at `/` and `docs/index.html` at `/docs/`, with no redirect from `/docs` (defaults to false)
 
 - `cache_busted_paths = ["my_immutables_dir", "my_immutable_file"]` - a bracketed list of `&str`s of the subdirectories and/or single files which should gain the `Cache-Control` header with `public, max-age=31536000, immutable` for cache-busted paths. If this parameter is missing, the default is that no embedded files will have the `Cache-Control` header. Note: the files in `cache_busted_paths` need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header. 
 
 - `allow_unknown_extensions = false` - serve files with unknown extensions as `application/octet-stream` content-type; when not set to `true`, compilation fails if a content type cannot be guessed from the extension, or if the file has no extension
 
+#### Which files are embedded
+
+- Hidden files are embedded like any other file. List the ones you don't want in `ignore_paths`
+- Symlinks are followed and served at the path of the link, not of their target. Entries of `ignore_paths` and `cache_busted_paths` match the link's path, and must be inside the target directory
+- File names are percent-encoded in routes, so `my file.png` is served at `/my%20file.png`. A path segment starting with `:` or `*` is a compile error, because axum refuses it as a route
+
+#### Rebuilding after adding files
+
+Cargo tracks the embedded files, but not the directory: changing or deleting a file triggers a rebuild, while adding one doesn't. To pick up new files, add a `build.rs` to the crate calling the macro:
+
+```rust,ignore
+fn main() {
+    println!("cargo:rerun-if-changed=assets");
+}
+```
+
+#### Compile times
+
+With `compress = true` every asset is compressed each time the crate calling the macro is compiled, including `cargo check`. If that gets slow, put the macro call in a separate crate containing only the assets, which is rarely recompiled.
+
 ### Embedding a single static asset file
 
-Use the `embed_asset!` macro to return a function you can use as a GET handler, which will include your static file, embedded into your binary:
+Use the `embed_asset!` macro to return a `MethodRouter` serving GET and HEAD, which will include your static file, embedded into your binary:
 
 ```rust,ignore
 use axum::Router;
