@@ -1694,3 +1694,67 @@ async fn vary_is_only_sent_when_a_compressed_body_exists() {
     let response = get_response(router, create_request("/app.js", &Compression::None)).await;
     assert_eq!(response.headers().get("vary").unwrap(), "Accept-Encoding");
 }
+
+#[tokio::test]
+async fn symlinks_are_served_at_their_own_path() {
+    embed_assets!("../test_fixtures/symlinks");
+    let router: Router<()> = static_router();
+
+    for route in ["/real/a.txt", "/alias.txt", "/linked_dir/a.txt"] {
+        let response =
+            get_response(router.clone(), create_request(route, &Compression::None)).await;
+        assert_eq!(response.status(), StatusCode::OK, "{route}");
+    }
+}
+
+#[tokio::test]
+async fn ignoring_a_symlink_only_ignores_the_link() {
+    embed_assets!(
+        "../test_fixtures/symlinks",
+        ignore_paths = ["alias.txt", "linked_dir"]
+    );
+    let router: Router<()> = static_router();
+
+    for (route, status) in [
+        ("/real/a.txt", StatusCode::OK),
+        ("/alias.txt", StatusCode::NOT_FOUND),
+        ("/linked_dir/a.txt", StatusCode::NOT_FOUND),
+    ] {
+        let response =
+            get_response(router.clone(), create_request(route, &Compression::None)).await;
+        assert_eq!(response.status(), status, "{route}");
+    }
+}
+
+#[tokio::test]
+async fn cache_busted_paths_match_symlinks_by_name() {
+    embed_assets!(
+        "../test_fixtures/symlinks",
+        cache_busted_paths = ["linked_dir"]
+    );
+    let router: Router<()> = static_router();
+
+    let request = create_request("/linked_dir/a.txt", &Compression::None);
+    let response = get_response(router.clone(), request).await;
+    assert!(response.headers().contains_key("cache-control"));
+
+    let request = create_request("/real/a.txt", &Compression::None);
+    let response = get_response(router, request).await;
+    assert!(!response.headers().contains_key("cache-control"));
+}
+
+#[tokio::test]
+async fn dangling_symlinks_can_be_ignored() {
+    embed_assets!("../test_fixtures/dangling", ignore_paths = ["dangling.txt"]);
+    let router: Router<()> = static_router();
+    let response = get_response(router, create_request("/ok.txt", &Compression::None)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn glob_characters_in_the_path_are_literal() {
+    embed_assets!("../test_fixtures/glob[1]/assets");
+    let router: Router<()> = static_router();
+    let response = get_response(router, create_request("/a.txt", &Compression::None)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}

@@ -5,7 +5,6 @@ use std::{
     path::PathBuf,
 };
 
-use glob::{GlobError, PatternError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -30,14 +29,10 @@ pub(crate) enum Error {
     CannotMakeFileRelative(PathBuf),
     #[error("File path {0} is not utf-8")]
     FilePathIsNotUtf8(PathBuf),
-    #[error("Invalid unicode in directory name {0}")]
-    InvalidUnicodeInDirectoryName(PathBuf),
-    #[error("Cannot canonicalize ignore path {path}: {error}")]
-    CannotCanonicalizeIgnorePath {
-        path: PathBuf,
-        #[source]
-        error: io::Error,
-    },
+    #[error("Path {0} is outside of the assets directory")]
+    PathOutsideAssetsDir(PathBuf),
+    #[error("{0} is not a regular file")]
+    NotARegularFile(PathBuf),
     #[error("Error while compressing entry {entry} with gzip: {error}")]
     Gzip {
         entry: PathBuf,
@@ -56,19 +51,15 @@ pub(crate) enum Error {
         #[source]
         error: io::Error,
     },
-    #[error("Error while parsing glob pattern")]
-    Pattern(#[source] PatternError),
-    #[error("Error reading path for glob: {0}")]
-    Glob(#[source] GlobError),
-    #[error("Cannot get entry {entry} metadata: {error}")]
-    CannotGetMetadata {
-        entry: PathBuf,
+    #[error("Cannot read directory {dir}: {error}")]
+    CannotReadDirectory {
+        dir: PathBuf,
         #[source]
         error: io::Error,
     },
-    #[error("Cannot canonicalize directory {dir} for cache-busting: {error}")]
-    CannotCanonicalizeCacheBustedDir {
-        dir: PathBuf,
+    #[error("Cannot get entry {entry} metadata: {error}")]
+    CannotGetMetadata {
+        entry: PathBuf,
         #[source]
         error: io::Error,
     },
