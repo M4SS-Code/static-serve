@@ -1818,3 +1818,130 @@ async fn macro_options_accept_a_trailing_comma() {
     embed_assets!("../test_fixtures/assets/small", compress = true,);
     assert!(static_router::<()>().has_routes());
 }
+
+#[tokio::test]
+async fn head_matches_get_without_a_body() {
+    embed_assets!("../test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+
+    let get = get_response(
+        router.clone(),
+        create_request("/app.js", &Compression::Gzip),
+    )
+    .await;
+    let request = Request::builder()
+        .method(Method::HEAD)
+        .uri("/app.js")
+        .header(ACCEPT_ENCODING, "gzip")
+        .header(RANGE, "bytes=0-1")
+        .body(Body::empty())
+        .unwrap();
+    let head = get_response(router, request).await;
+
+    assert_eq!(head.status(), StatusCode::OK);
+    assert_eq!(head.headers(), get.headers());
+    assert!(
+        head.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn embed_asset_handles_ranges_and_preconditions() {
+    let handler = embed_asset!(
+        "../test_fixtures/assets/big/app.js",
+        compress = true,
+        cache_bust = true
+    );
+    let router: Router<()> = Router::new().route("/app.js", handler);
+    let asset = include_bytes!("../../test_fixtures/assets/big/app.js");
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, "bytes=-3")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        response.headers().get("cache-control").unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("content-range")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        format!(
+            "bytes {}-{}/{}",
+            asset.len() - 3,
+            asset.len() - 1,
+            asset.len()
+        )
+    );
+    let etag = response.headers().get("etag").unwrap().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(*body, asset[asset.len() - 3..]);
+
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(IF_MATCH, etag)
+        .header(RANGE, "bytes=1-")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(router, request).await;
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+}
+
+#[tokio::test]
+async fn unsatisfiable_and_ignored_ranges() {
+    embed_assets!("../test_fixtures/assets/small");
+    let router: Router<()> = static_router();
+    let length = include_bytes!("../../test_fixtures/assets/small/app.js").len();
+
+    for (range, status) in [
+        ("bytes=-0", StatusCode::RANGE_NOT_SATISFIABLE),
+        ("bytes=999-", StatusCode::RANGE_NOT_SATISFIABLE),
+        ("bytes=2-1", StatusCode::OK),
+        ("bytes=0-1,3-4", StatusCode::OK),
+        ("items=0-1", StatusCode::OK),
+    ] {
+        let request = Request::builder()
+            .uri("/app.js")
+            .header(RANGE, range)
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), status, "{range}");
+        if status == StatusCode::RANGE_NOT_SATISFIABLE {
+            assert_eq!(
+                response
+                    .headers()
+                    .get("content-range")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                format!("bytes */{length}")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn only_get_and_head_are_allowed() {
+    embed_assets!("../test_fixtures/assets/small");
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/app.js")
+        .body(Body::empty())
+        .unwrap();
+    let response = get_response(static_router(), request).await;
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(response.headers().get("allow").unwrap(), "GET,HEAD");
+}
