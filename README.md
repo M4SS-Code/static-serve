@@ -46,7 +46,7 @@ This will:
 
 #### Required parameter
 
-- `path_to_dir` - a valid `&str` string literal of the path to the static files to be included
+- `path_to_dir` - a valid `&str` string literal of the path to the static files to be included. Relative paths start at the directory containing the crate's `Cargo.toml`
 
 #### Optional parameters
 
@@ -83,7 +83,7 @@ This will:
 
 #### Required parameter
 
-- `path_to_file` - a valid `&str` string literal of the path to the static file to be included
+- `path_to_file` - a valid `&str` string literal of the path to the static file to be included. Relative paths start at the directory containing the crate's `Cargo.toml`
 
 #### Optional parameters
 
