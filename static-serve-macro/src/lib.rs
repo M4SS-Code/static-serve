@@ -33,7 +33,7 @@ use error::{Error, GzipType, ZstdType};
 /// # // But only doctests support the `compile_fail` attribute so the failing
 /// # // test is placed here.
 /// embed_assets!(
-///     "../static-serve/test_unknown_extensions",
+///     "../static-serve/test_fixtures/unknown_extensions",
 ///     allow_unknown_extensions = false
 /// );
 /// ```
