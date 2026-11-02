@@ -109,45 +109,39 @@ fn is_wildcard(values: &[HeaderValue]) -> bool {
     matches!(values, [value] if value.as_bytes().trim_ascii() == b"*")
 }
 
-/// The values of every `If-Match` header in the request
+/// The values of the conditional headers of a request
 #[derive(Debug)]
-struct IfMatch(Vec<HeaderValue>);
+struct Conditions {
+    matching: Vec<HeaderValue>,
+    not_matching: Vec<HeaderValue>,
+}
 
-impl IfMatch {
+impl Conditions {
     fn from_headers(headers: &HeaderMap) -> Self {
-        let if_match = headers.get_all(IF_MATCH);
-        Self(if_match.iter().cloned().collect())
+        let values = |name| headers.get_all(name).iter().cloned().collect();
+        Self {
+            matching: values(IF_MATCH),
+            not_matching: values(IF_NONE_MATCH),
+        }
     }
 
-    /// Check if the header is absent, or if `etag` is matched by `*` or by an
-    /// entry of the list
+    /// Check if `If-Match` is absent, or matches `etag`
     ///
     /// `If-Match` uses strong comparison, so `W/` entries never match
     /// (RFC 9110 section 13.1.1).
-    fn passes(&self, etag: &str) -> bool {
-        self.0.is_empty()
-            || is_wildcard(&self.0)
-            || entity_tags(&self.0).any(|candidate| candidate == etag.as_bytes())
-    }
-}
-
-/// The values of every `If-None-Match` header in the request
-#[derive(Debug)]
-struct IfNoneMatch(Vec<HeaderValue>);
-
-impl IfNoneMatch {
-    fn from_headers(headers: &HeaderMap) -> Self {
-        let if_none_match = headers.get_all(IF_NONE_MATCH);
-        Self(if_none_match.iter().cloned().collect())
+    fn if_match_passes(&self, etag: &str) -> bool {
+        self.matching.is_empty()
+            || is_wildcard(&self.matching)
+            || entity_tags(&self.matching).any(|candidate| candidate == etag.as_bytes())
     }
 
-    /// Check if `etag` is matched by `*` or by an entry of the list
+    /// Check if `If-None-Match` matches `etag`
     ///
     /// `If-None-Match` uses weak comparison, so a `W/` prefix is ignored
     /// (RFC 9110 section 13.1.2).
-    fn matches(&self, etag: &str) -> bool {
-        is_wildcard(&self.0)
-            || entity_tags(&self.0).any(|candidate| {
+    fn if_none_match_matches(&self, etag: &str) -> bool {
+        is_wildcard(&self.not_matching)
+            || entity_tags(&self.not_matching).any(|candidate| {
                 candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
             })
     }
@@ -157,8 +151,7 @@ impl IfNoneMatch {
 #[derive(Debug)]
 struct StaticRequest {
     accept_encoding: AcceptEncoding,
-    if_match: IfMatch,
-    if_none_match: IfNoneMatch,
+    conditions: Conditions,
     http_range: Option<HttpRange>,
     if_range: Option<IfRange>,
 }
@@ -172,8 +165,7 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         Ok(Self {
             accept_encoding: AcceptEncoding::from_headers(&parts.headers),
-            if_match: IfMatch::from_headers(&parts.headers),
-            if_none_match: IfNoneMatch::from_headers(&parts.headers),
+            conditions: Conditions::from_headers(&parts.headers),
             http_range: Option::from_request_parts(parts, state).await?,
             if_range: Option::from_request_parts(parts, state).await?,
         })
@@ -232,8 +224,7 @@ fn static_inner(
 ) -> impl IntoResponse {
     let StaticRequest {
         accept_encoding,
-        if_match,
-        if_none_match,
+        conditions,
         http_range,
         if_range,
     } = request;
@@ -271,11 +262,11 @@ fn static_inner(
     // Cache-Control stays off 412 and 416: without it the errors can't be
     // stored, while with it a cache could answer later requests with them,
     // although the conditional and Range headers aren't part of the cache key.
-    if !if_match.passes(selected.etag) {
+    if !conditions.if_match_passes(selected.etag) {
         return (validators, StatusCode::PRECONDITION_FAILED).into_response();
     }
 
-    if if_none_match.matches(selected.etag) {
+    if conditions.if_none_match_matches(selected.etag) {
         // RFC 9110 section 8.6 only lets a 304 carry the Content-Length the
         // 200 would have, so send that one. Without it, axum derives
         // `Content-Length: 0` from the empty body: hyper drops that from
