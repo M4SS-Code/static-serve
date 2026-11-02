@@ -1938,3 +1938,14 @@ async fn utf8_charset_can_be_disabled() {
         );
     }
 }
+
+#[tokio::test]
+async fn macro_options_accept_a_trailing_comma() {
+    embed_assets!("../test_fixtures/assets/small", compress = true,);
+    assert!(static_router::<()>().has_routes());
+
+    let file = embed_asset!("../test_fixtures/assets/small/app.js", compress = true,);
+    let router: Router<()> = Router::new().route("/app.js", file);
+    let response = get_response(router, create_request("/app.js", &Compression::None)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}

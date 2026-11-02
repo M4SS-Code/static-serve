@@ -86,6 +86,10 @@ impl Parse for EmbedAsset {
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
@@ -237,6 +241,10 @@ impl Parse for EmbedAssets {
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
