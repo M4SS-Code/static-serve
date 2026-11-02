@@ -1664,3 +1664,29 @@ async fn entity_tag_containing_a_star_is_not_a_wildcard() {
         assert_eq!(response.status(), status);
     }
 }
+
+#[tokio::test]
+async fn if_range_that_cant_match_ignores_the_range() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = false);
+    let router: Router<()> = static_router();
+
+    let response = get_response(
+        router.clone(),
+        create_request("/app.js", &Compression::None),
+    )
+    .await;
+    let etag = response.headers().get("etag").unwrap().clone();
+
+    let obs_text = HeaderValue::from_bytes(b"\"caf\xc3\xa9\"").unwrap();
+    let empty = HeaderValue::from_static("");
+    let cases: [&[&HeaderValue]; 3] = [&[&obs_text], &[&empty], &[&etag, &empty]];
+    for values in cases {
+        let mut builder = Request::builder().uri("/app.js").header(RANGE, "bytes=0-1");
+        for value in values {
+            builder = builder.header(IF_RANGE, *value);
+        }
+        let request = builder.body(Body::empty()).unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+}

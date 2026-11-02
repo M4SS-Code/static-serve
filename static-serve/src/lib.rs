@@ -9,7 +9,7 @@ use axum::{
         StatusCode,
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
-            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, VARY,
+            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, IF_RANGE, VARY,
         },
         request::Parts,
     },
@@ -17,10 +17,7 @@ use axum::{
     routing::MethodRouter,
 };
 use bytes::Bytes;
-use range_requests::{
-    headers::{if_range::IfRange, range::HttpRange},
-    serve_file_with_http_range,
-};
+use range_requests::{headers::range::HttpRange, serve_file_with_http_range};
 
 pub use static_serve_macro::{embed_asset, embed_assets};
 
@@ -108,47 +105,57 @@ fn is_wildcard(values: &[HeaderValue]) -> bool {
         .any(|value| value.as_bytes().trim_ascii() == b"*")
 }
 
-/// The values of every `If-Match` header in the request
+/// The values of the conditional headers of a request
 #[derive(Debug)]
-struct IfMatch(Vec<HeaderValue>);
+struct Conditions {
+    matching: Vec<HeaderValue>,
+    not_matching: Vec<HeaderValue>,
+    range_validator: Vec<HeaderValue>,
+}
 
-impl IfMatch {
+impl Conditions {
     fn from_headers(headers: &HeaderMap) -> Self {
-        let if_match = headers.get_all(IF_MATCH);
-        Self(if_match.iter().cloned().collect())
+        let values = |name| headers.get_all(name).iter().cloned().collect();
+        Self {
+            matching: values(IF_MATCH),
+            not_matching: values(IF_NONE_MATCH),
+            range_validator: values(IF_RANGE),
+        }
     }
 
-    /// Check if the header is absent, or if `etag` is matched by `*` or by an
-    /// entry of the list
+    /// Check if `If-Match` is absent, or matches `etag`
     ///
     /// `If-Match` uses strong comparison, so `W/` entries never match
     /// (RFC 9110 section 13.1.1).
-    fn passes(&self, etag: &str) -> bool {
-        self.0.is_empty()
-            || is_wildcard(&self.0)
-            || entity_tags(&self.0).any(|candidate| candidate == etag.as_bytes())
-    }
-}
-
-/// The values of every `If-None-Match` header in the request
-#[derive(Debug)]
-struct IfNoneMatch(Vec<HeaderValue>);
-
-impl IfNoneMatch {
-    fn from_headers(headers: &HeaderMap) -> Self {
-        let if_none_match = headers.get_all(IF_NONE_MATCH);
-        Self(if_none_match.iter().cloned().collect())
+    fn if_match_passes(&self, etag: &str) -> bool {
+        self.matching.is_empty()
+            || is_wildcard(&self.matching)
+            || entity_tags(&self.matching).any(|candidate| candidate == etag.as_bytes())
     }
 
-    /// Check if `etag` is matched by `*` or by an entry of the list
+    /// Check if `If-None-Match` matches `etag`
     ///
     /// `If-None-Match` uses weak comparison, so a `W/` prefix is ignored
     /// (RFC 9110 section 13.1.2).
-    fn matches(&self, etag: &str) -> bool {
-        is_wildcard(&self.0)
-            || entity_tags(&self.0).any(|candidate| {
+    fn if_none_match_matches(&self, etag: &str) -> bool {
+        is_wildcard(&self.not_matching)
+            || entity_tags(&self.not_matching).any(|candidate| {
                 candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
             })
+    }
+
+    /// Check if `If-Range` is absent, or holds exactly `etag`
+    ///
+    /// Bytes are compared directly since any other value is false: the
+    /// comparison is strong, and we don't send `Last-Modified` for a date to
+    /// match. A value we can't interpret must fail too, not count as absent,
+    /// because RFC 9110 section 13.1.5 only allows a range if it matches.
+    fn if_range_passes(&self, etag: &str) -> bool {
+        match self.range_validator.as_slice() {
+            [] => true,
+            [value] => value.as_bytes().trim_ascii() == etag.as_bytes(),
+            _ => false,
+        }
     }
 }
 
@@ -156,10 +163,8 @@ impl IfNoneMatch {
 #[derive(Debug)]
 struct StaticRequest {
     accept_encoding: AcceptEncoding,
-    if_match: IfMatch,
-    if_none_match: IfNoneMatch,
+    conditions: Conditions,
     http_range: Option<HttpRange>,
-    if_range: Option<IfRange>,
 }
 
 impl<S> FromRequestParts<S> for StaticRequest
@@ -171,10 +176,8 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         Ok(Self {
             accept_encoding: AcceptEncoding::from_headers(&parts.headers),
-            if_match: IfMatch::from_headers(&parts.headers),
-            if_none_match: IfNoneMatch::from_headers(&parts.headers),
+            conditions: Conditions::from_headers(&parts.headers),
             http_range: Option::from_request_parts(parts, state).await?,
-            if_range: Option::from_request_parts(parts, state).await?,
         })
     }
 }
@@ -231,10 +234,8 @@ fn static_inner(
 ) -> impl IntoResponse {
     let StaticRequest {
         accept_encoding,
-        if_match,
-        if_none_match,
+        conditions,
         http_range,
-        if_range,
     } = request;
 
     let optional_cache_control = if cache_busted {
@@ -248,13 +249,7 @@ fn static_inner(
 
     // Ranges always apply to the uncompressed body, so an `If-Range` holding
     // the `ETag` of a compressed body must not match.
-    let http_range = match (http_range, if_range) {
-        (Some(range), Some(if_range)) => {
-            let etag_value = HeaderValue::from_static(body.etag);
-            if_range.evaluate(range, None, Some(&etag_value))
-        }
-        (range, _) => range,
-    };
+    let http_range = http_range.filter(|_| conditions.if_range_passes(body.etag));
 
     let (selected, optional_content_encoding) = match (
         (accept_encoding.gzip, body_gz),
@@ -280,11 +275,11 @@ fn static_inner(
 
     // Cache-Control stays off 412 and 416: without it they can't be stored,
     // while with it a cache could answer later requests with the empty error.
-    if !if_match.passes(selected.etag) {
+    if !conditions.if_match_passes(selected.etag) {
         return (validators, StatusCode::PRECONDITION_FAILED).into_response();
     }
 
-    if if_none_match.matches(selected.etag) {
+    if conditions.if_none_match_matches(selected.etag) {
         // The explicit length keeps axum from deriving `Content-Length: 0`
         // from the empty body, which would misdescribe the 200 response
         // (RFC 9110 section 8.6). Middleware reads the exact body size of 0,
