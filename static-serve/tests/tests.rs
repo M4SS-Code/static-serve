@@ -7,7 +7,8 @@ use axum::{
     http::{
         HeaderValue, Method, Request, Response, StatusCode,
         header::{
-            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_NONE_MATCH, IF_RANGE, RANGE,
+            ACCEPT_ENCODING, ACCEPT_RANGES, CONTENT_ENCODING, IF_MATCH, IF_NONE_MATCH, IF_RANGE,
+            RANGE,
         },
     },
 };
@@ -1618,5 +1619,29 @@ async fn not_modified_describes_the_200_and_has_an_empty_body() {
         // Compression middleware skips bodies of an exact, small size. A body
         // of unknown size made it compress the 304, which breaks HTTP/2.
         assert_eq!(response.body().size_hint().exact(), Some(0));
+    }
+}
+
+#[tokio::test]
+async fn error_responses_are_not_cacheable_and_have_no_content_type() {
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/big",
+        cache_busted_paths = ["immutable"]
+    );
+    let router: Router<()> = static_router();
+
+    for (header, value, status) in [
+        (IF_MATCH, "\"stale\"", StatusCode::PRECONDITION_FAILED),
+        (RANGE, "bytes=999999-", StatusCode::RANGE_NOT_SATISFIABLE),
+    ] {
+        let request = Request::builder()
+            .uri("/immutable/app.js")
+            .header(header, value)
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), status);
+        assert!(!response.headers().contains_key("cache-control"));
+        assert!(!response.headers().contains_key("content-type"));
     }
 }

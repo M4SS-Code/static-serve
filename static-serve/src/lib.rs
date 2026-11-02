@@ -263,16 +263,15 @@ fn static_inner(
     };
     let selected_body = Bytes::from_static(selected.bytes);
 
-    let resp_base = (
-        [
-            (ETAG, HeaderValue::from_static(selected.etag)),
-            (VARY, HeaderValue::from_static("Accept-Encoding")),
-        ],
-        optional_cache_control,
-    );
+    let validators = [
+        (ETAG, HeaderValue::from_static(selected.etag)),
+        (VARY, HeaderValue::from_static("Accept-Encoding")),
+    ];
 
+    // Cache-Control stays off 412 and 416: without it they can't be stored,
+    // while with it a cache could answer later requests with the empty error.
     if !if_match.passes(selected.etag) {
-        return (resp_base, StatusCode::PRECONDITION_FAILED).into_response();
+        return (validators, StatusCode::PRECONDITION_FAILED).into_response();
     }
 
     if if_none_match.matches(selected.etag) {
@@ -284,22 +283,26 @@ fn static_inner(
         return (
             StatusCode::NOT_MODIFIED,
             [(CONTENT_LENGTH, content_length)],
-            resp_base,
+            (validators, optional_cache_control),
             (),
         )
             .into_response();
     }
 
-    let resp_base = (
-        [
-            (CONTENT_TYPE, HeaderValue::from_static(content_type)),
-            (ACCEPT_RANGES, HeaderValue::from_static("bytes")),
-        ],
-        resp_base,
-    );
+    let accept_ranges = [(ACCEPT_RANGES, HeaderValue::from_static("bytes"))];
 
     match serve_file_with_http_range(selected_body, http_range) {
-        Ok(body_range) => (resp_base, optional_content_encoding, body_range).into_response(),
-        Err(unsatisfiable) => (resp_base, unsatisfiable).into_response(),
+        Ok(body_range) => (
+            (
+                validators,
+                optional_cache_control,
+                accept_ranges,
+                [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
+                optional_content_encoding,
+            ),
+            body_range,
+        )
+            .into_response(),
+        Err(unsatisfiable) => (validators, accept_ranges, unsatisfiable).into_response(),
     }
 }
