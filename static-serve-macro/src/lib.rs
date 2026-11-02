@@ -178,8 +178,8 @@ impl ToTokens for EmbedAsset {
                     #value
                 });
             }
-            Err(err_message) => {
-                let error = syn::Error::new(Span::call_site(), err_message);
+            Err(err) => {
+                let error = syn::Error::new(Span::call_site(), DisplayFullError(&err));
                 tokens.extend(error.to_compile_error());
             }
         }
@@ -303,8 +303,8 @@ impl ToTokens for EmbedAssets {
                     #value
                 });
             }
-            Err(err_message) => {
-                let error = syn::Error::new(Span::call_site(), err_message);
+            Err(err) => {
+                let error = syn::Error::new(Span::call_site(), DisplayFullError(&err));
                 tokens.extend(error.to_compile_error());
             }
         }
@@ -904,15 +904,14 @@ fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime
         return if allow_unknown_extensions {
             Ok(mime::APPLICATION_OCTET_STREAM)
         } else {
-            Err(error::Error::UnknownFileExtension(None))
+            Err(Error::MissingFileExtension(path.to_path_buf()))
         };
     };
 
-    let ext = ext
-        .to_str()
-        .ok_or(error::Error::InvalidFileExtension(path.into()))?;
-
-    let guess = mime_guess::MimeGuess::from_ext(ext);
+    let guess = ext.to_str().map_or(
+        mime_guess::MimeGuess::from_ext(""),
+        mime_guess::MimeGuess::from_ext,
+    );
 
     if allow_unknown_extensions {
         return Ok(guess.first_or_octet_stream());
@@ -920,7 +919,7 @@ fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime
 
     guess
         .first()
-        .ok_or(error::Error::UnknownFileExtension(Some(ext.into())))
+        .ok_or_else(|| Error::UnknownFileExtension(path.to_path_buf()))
 }
 
 fn etag(contents: &[u8]) -> String {

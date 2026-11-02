@@ -1,25 +1,20 @@
-use std::{
-    ffi::{OsStr, OsString},
-    fmt::{Display, Formatter},
-    io,
-    path::PathBuf,
-};
+use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
-    #[error("{}", UnknownFileExtension(.0.as_deref()))]
-    UnknownFileExtension(Option<OsString>),
-    #[error("File extension for file {} is not valid unicode", 0.to_string())]
-    InvalidFileExtension(OsString),
-    #[error("Cannot canonicalize assets directory {dir}: {error}")]
+    #[error("Unknown file extension of {0}")]
+    UnknownFileExtension(PathBuf),
+    #[error("Missing file extension of {0}")]
+    MissingFileExtension(PathBuf),
+    #[error("Cannot canonicalize assets directory {dir}")]
     CannotCanonicalizeDirectory {
         dir: String,
         #[source]
         error: io::Error,
     },
-    #[error("Cannot canonicalize asset file {entry}: {error}")]
+    #[error("Cannot canonicalize asset file {entry}")]
     CannotCanonicalizeFile {
         entry: PathBuf,
         #[source]
@@ -37,31 +32,31 @@ pub(crate) enum Error {
     PathOutsideAssetsDir(PathBuf),
     #[error("{0} is not a regular file")]
     NotARegularFile(PathBuf),
-    #[error("Error while compressing entry {entry} with gzip: {error}")]
+    #[error("Error while compressing entry {entry} with gzip")]
     Gzip {
         entry: PathBuf,
         #[source]
         error: GzipType,
     },
-    #[error("Error while compressing entry {entry} with zstd: {error}")]
+    #[error("Error while compressing entry {entry} with zstd")]
     Zstd {
         entry: PathBuf,
         #[source]
         error: ZstdType,
     },
-    #[error("Error while reading entry {entry} contents: {error}")]
+    #[error("Error while reading entry {entry} contents")]
     CannotReadEntryContents {
         entry: PathBuf,
         #[source]
         error: io::Error,
     },
-    #[error("Cannot read directory {dir}: {error}")]
+    #[error("Cannot read directory {dir}")]
     CannotReadDirectory {
         dir: PathBuf,
         #[source]
         error: io::Error,
     },
-    #[error("Cannot get entry {entry} metadata: {error}")]
+    #[error("Cannot get entry {entry} metadata")]
     CannotGetMetadata {
         entry: PathBuf,
         #[source]
@@ -73,20 +68,6 @@ pub(crate) enum Error {
         first_file: String,
         second_file: String,
     },
-}
-
-struct UnknownFileExtension<'a>(Option<&'a OsStr>);
-impl Display for UnknownFileExtension<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            Some(ext) => write!(
-                f,
-                "Unknown file extension in directory of static assets: {}",
-                ext.to_string_lossy()
-            ),
-            None => write!(f, "Missing file extension"),
-        }
-    }
 }
 
 #[derive(Debug, Error)]
@@ -103,22 +84,4 @@ pub(crate) enum ZstdType {
     EncoderWrite(#[source] io::Error),
     #[error("The encoder could not complete the `finish` procedure")]
     EncoderFinish(#[source] io::Error),
-}
-
-#[cfg(test)]
-mod test {
-    use std::ffi::OsStr;
-
-    use super::UnknownFileExtension;
-
-    #[test]
-    fn unknown_file_extension() {
-        let missing_extension = UnknownFileExtension(None);
-        assert_eq!(missing_extension.to_string(), "Missing file extension");
-        let unknown_extension = UnknownFileExtension(Some(OsStr::new("pippo")));
-        assert_eq!(
-            unknown_extension.to_string(),
-            "Unknown file extension in directory of static assets: pippo"
-        );
-    }
 }
