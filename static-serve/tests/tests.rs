@@ -1602,6 +1602,7 @@ async fn refusing_every_body_is_not_acceptable() {
             .unwrap();
         let response = get_response(router, request).await;
         assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+        assert_eq!(response.headers().get("vary").unwrap(), "Accept-Encoding");
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(body, "Available content codings: identity\n");
     }
@@ -1787,4 +1788,23 @@ async fn if_range_that_cant_match_ignores_the_range() {
         let response = get_response(router.clone(), request).await;
         assert_eq!(response.status(), StatusCode::OK);
     }
+}
+
+#[tokio::test]
+async fn vary_is_only_sent_when_a_compressed_body_exists() {
+    {
+        embed_assets!(
+            "../static-serve/test_fixtures/assets/small",
+            compress = true
+        );
+        let router: Router<()> = static_router();
+        let request = create_request("/app.js", &Compression::Gzip);
+        let response = get_response(router, request).await;
+        assert!(!response.headers().contains_key("vary"));
+    }
+
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
+    let router: Router<()> = static_router();
+    let response = get_response(router, create_request("/app.js", &Compression::None)).await;
+    assert_eq!(response.headers().get("vary").unwrap(), "Accept-Encoding");
 }
