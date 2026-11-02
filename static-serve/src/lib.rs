@@ -14,7 +14,7 @@ use axum::{
         request::Parts,
     },
     response::IntoResponse,
-    routing::{MethodRouter, get},
+    routing::MethodRouter,
 };
 use bytes::Bytes;
 use range_requests::{
@@ -101,25 +101,7 @@ where
 {
     router.route(
         web_path,
-        get(
-            move |accept_encoding: AcceptEncoding,
-                  if_none_match: IfNoneMatch,
-                  http_range: Option<HttpRange>,
-                  if_range: Option<IfRange>| async move {
-                static_inner(StaticInnerData {
-                    content_type,
-                    etag,
-                    body,
-                    body_gz,
-                    body_zst,
-                    cache_busted,
-                    accept_encoding,
-                    if_none_match,
-                    http_range,
-                    if_range,
-                })
-            },
-        ),
+        static_method_router(content_type, etag, body, body_gz, body_zst, cache_busted),
     )
 }
 
