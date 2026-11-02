@@ -1812,3 +1812,9 @@ async fn file_names_are_reachable_at_their_encoded_url() {
         assert_eq!(response.status(), status, "{route}");
     }
 }
+
+#[tokio::test]
+async fn macro_options_accept_a_trailing_comma() {
+    embed_assets!("../test_fixtures/assets/small", compress = true,);
+    assert!(static_router::<()>().has_routes());
+}

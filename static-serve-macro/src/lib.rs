@@ -50,6 +50,19 @@ fn resolve_path(path: &str) -> PathBuf {
     )
 }
 
+/// Store a macro option, rejecting a repeated key instead of silently keeping
+/// the last value
+fn set_once<T>(option: &mut Option<T>, value: T, key: &Ident) -> syn::Result<()> {
+    if option.replace(value).is_some() {
+        return Err(syn::Error::new(
+            key.span(),
+            format!("Duplicate key `{key}` in macro options"),
+        ));
+    }
+
+    Ok(())
+}
+
 struct EmbedAsset {
     asset_file: AssetFile,
     should_compress: ShouldCompress,
@@ -70,21 +83,22 @@ impl Parse for EmbedAsset {
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
             match key.to_string().as_str() {
                 "compress" => {
-                    let value = input.parse()?;
-                    maybe_should_compress = Some(value);
+                    set_once(&mut maybe_should_compress, input.parse()?, &key)?;
                 }
                 "cache_bust" => {
-                    let value = input.parse()?;
-                    maybe_is_cache_busted = Some(value);
+                    set_once(&mut maybe_is_cache_busted, input.parse()?, &key)?;
                 }
                 "allow_unknown_extensions" => {
-                    let value = input.parse()?;
-                    maybe_allow_unknown_extensions = Some(value);
+                    set_once(&mut maybe_allow_unknown_extensions, input.parse()?, &key)?;
                 }
                 _ => {
                     return Err(syn::Error::new(
@@ -208,29 +222,28 @@ impl Parse for EmbedAssets {
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
             match key.to_string().as_str() {
                 "compress" => {
-                    let value = input.parse()?;
-                    maybe_should_compress = Some(value);
+                    set_once(&mut maybe_should_compress, input.parse()?, &key)?;
                 }
                 "ignore_paths" => {
-                    let value = input.parse()?;
-                    maybe_ignore_paths = Some(value);
+                    set_once(&mut maybe_ignore_paths, input.parse()?, &key)?;
                 }
                 "strip_html_ext" => {
-                    let value = input.parse()?;
-                    maybe_should_strip_html_ext = Some(value);
+                    set_once(&mut maybe_should_strip_html_ext, input.parse()?, &key)?;
                 }
                 "cache_busted_paths" => {
-                    let value = input.parse()?;
-                    maybe_cache_busted_paths = Some(value);
+                    set_once(&mut maybe_cache_busted_paths, input.parse()?, &key)?;
                 }
                 "allow_unknown_extensions" => {
-                    let value = input.parse()?;
-                    maybe_allow_unknown_extensions = Some(value);
+                    set_once(&mut maybe_allow_unknown_extensions, input.parse()?, &key)?;
                 }
                 _ => {
                     return Err(syn::Error::new(
@@ -1082,6 +1095,21 @@ mod tests {
                 "../test_fixtures/route_syntax",
                 ignore_paths = [":colon.txt"]
             )),
+            None
+        );
+    }
+
+    #[test]
+    fn repeated_options_fail_the_build() {
+        let error = embed_assets_error(quote!(
+            "../test_fixtures/assets/small",
+            compress = true,
+            compress = false
+        ))
+        .unwrap();
+        assert_eq!(error, "Duplicate key `compress` in macro options");
+        assert_eq!(
+            embed_assets_error(quote!("../test_fixtures/assets/small", compress = true,)),
             None
         );
     }
