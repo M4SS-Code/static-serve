@@ -1232,27 +1232,38 @@ async fn accept_ranges_absent_on_304() {
 }
 
 #[tokio::test]
-async fn range_request_disables_compression() {
+async fn range_is_ignored_when_a_compressed_body_is_selected() {
     embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
 
-    // Request with both Range and Accept-Encoding: zstd
-    let request = Request::builder()
-        .uri("/app.js")
-        .header(RANGE, "bytes=0-4")
-        .header(ACCEPT_ENCODING, "zstd")
-        .body(Body::empty())
-        .unwrap();
-    let response = get_response(router, request).await;
-    let (parts, body) = response.into_parts();
-    assert_eq!(parts.status, StatusCode::PARTIAL_CONTENT);
-    // Compression should be disabled for range requests
-    assert!(parts.headers.get(CONTENT_ENCODING).is_none());
+    let request = create_request("/app.js", &Compression::Zstd);
+    let plain = get_response(router.clone(), request).await;
+    assert!(!plain.headers().contains_key(ACCEPT_RANGES));
+    let etag = plain.headers().get("etag").unwrap().clone();
 
-    let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    // Should be the first 5 bytes of the uncompressed body
-    let expected = &include_bytes!("../../test_fixtures/assets/big/app.js")[..5];
-    assert_eq!(*collected_body_bytes, *expected);
+    let mut request = create_request("/app.js", &Compression::Zstd);
+    request
+        .headers_mut()
+        .insert(RANGE, HeaderValue::from_static("bytes=0-4"));
+    let response = get_response(router.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get(CONTENT_ENCODING).unwrap(), "zstd");
+    assert_eq!(response.headers().get("etag"), Some(&etag));
+
+    // Preconditions see the same representation with and without `Range`
+    let mut request = create_request("/app.js", &Compression::Zstd);
+    let headers = request.headers_mut();
+    headers.insert(RANGE, HeaderValue::from_static("bytes=0-4"));
+    headers.insert(IF_NONE_MATCH, etag.clone());
+    let response = get_response(router.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+
+    let mut request = create_request("/app.js", &Compression::Zstd);
+    let headers = request.headers_mut();
+    headers.insert(RANGE, HeaderValue::from_static("bytes=0-4"));
+    headers.insert(IF_MATCH, etag);
+    let response = get_response(router, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]

@@ -247,20 +247,15 @@ fn static_inner(
         None
     };
 
-    // Ranges always apply to the uncompressed body, so an `If-Range` holding
-    // the `ETag` of a compressed body must not match.
-    let http_range = http_range.filter(|_| conditions.if_range_passes(body.etag));
-
     let (selected, optional_content_encoding) = match (
         (accept_encoding.gzip, body_gz),
         (accept_encoding.zstd, body_zst),
-        &http_range,
     ) {
-        (_, (true, Some(body_zst)), None) => (
+        (_, (true, Some(body_zst))) => (
             body_zst,
             Some([(CONTENT_ENCODING, HeaderValue::from_static("zstd"))]),
         ),
-        ((true, Some(body_gz)), _, None) => (
+        ((true, Some(body_gz)), _) => (
             body_gz,
             Some([(CONTENT_ENCODING, HeaderValue::from_static("gzip"))]),
         ),
@@ -294,7 +289,14 @@ fn static_inner(
             .into_response();
     }
 
-    let accept_ranges = [(ACCEPT_RANGES, HeaderValue::from_static("bytes"))];
+    // Only the uncompressed body can be ranged: a slice of a compressed stream
+    // can't be decoded on its own, and answering with uncompressed bytes under
+    // a different `ETag` would make the outcome of the preconditions above
+    // depend on `Range`. RFC 9110 section 14.2 lets us ignore `Range` instead.
+    let is_identity = optional_content_encoding.is_none();
+    let http_range =
+        http_range.filter(|_| is_identity && conditions.if_range_passes(selected.etag));
+    let accept_ranges = is_identity.then_some([(ACCEPT_RANGES, HeaderValue::from_static("bytes"))]);
 
     match serve_file_with_http_range(selected_body, http_range) {
         Ok(body_range) => (

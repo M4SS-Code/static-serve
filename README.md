@@ -101,7 +101,7 @@ The crate automatically handles:
 
 - With the optional cache-bust headers feature, each embedded file in the `cache_busted_paths` array (or single file in the case of `embed_asset!` with `cache_bust = true`) will be returned with a `Cache-Control` header with the value `public, max-age=31536000, immutable`. Note: the files involved need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header.
 
-- `Accept-Ranges: bytes` is advertised on all successful responses. When a `Range` header is present, the server responds with `206 Partial Content` and the requested byte range, or `416 Range Not Satisfiable` if the range is invalid. Compression is automatically disabled for range requests since byte offsets refer to the uncompressed body.
+- `Accept-Ranges: bytes` is advertised on uncompressed responses. When a `Range` header is present, the server responds with `206 Partial Content` and the requested byte range, or `416 Range Not Satisfiable` if the range can't be satisfied. Malformed and multi-range values are ignored. Ranges only apply to the uncompressed body, so `Range` is ignored and the full body is served when the request selects a compressed one. Send `Accept-Encoding: identity` to use ranges.
 
 ## Example
 
