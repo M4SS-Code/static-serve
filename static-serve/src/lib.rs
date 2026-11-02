@@ -236,37 +236,40 @@ fn static_inner(
         return (resp_base, StatusCode::NOT_MODIFIED).into_response();
     }
 
-    let resp_base = (
-        [
-            (CONTENT_TYPE, HeaderValue::from_static(content_type)),
-            (ACCEPT_RANGES, HeaderValue::from_static("bytes")),
-        ],
-        resp_base,
-    );
+    let (selected_body, optional_content_encoding) = match (
+        (accept_encoding.gzip, body_gz),
+        (accept_encoding.zstd, body_zst),
+    ) {
+        (_, (true, Some(body_zst))) => (
+            Bytes::from_static(body_zst),
+            Some([(CONTENT_ENCODING, HeaderValue::from_static("zstd"))]),
+        ),
+        ((true, Some(body_gz)), _) => (
+            Bytes::from_static(body_gz),
+            Some([(CONTENT_ENCODING, HeaderValue::from_static("gzip"))]),
+        ),
+        _ => (Bytes::from_static(body), None),
+    };
 
-    let http_range = match (http_range, if_range) {
+    // Only the uncompressed body can be ranged: a slice of a compressed stream
+    // can't be decoded on its own, and a slice of the uncompressed body can't
+    // be appended to a compressed one. RFC 9110 section 14.2 lets us ignore
+    // `Range` instead.
+    let is_identity = optional_content_encoding.is_none();
+    let http_range = match (http_range.filter(|_| is_identity), if_range) {
         (Some(range), Some(if_range)) => {
             let etag_value = HeaderValue::from_static(etag);
             if_range.evaluate(range, None, Some(&etag_value))
         }
         (range, _) => range,
     };
+    let accept_ranges = is_identity.then_some([(ACCEPT_RANGES, HeaderValue::from_static("bytes"))]);
 
-    let (selected_body, optional_content_encoding) = match (
-        (accept_encoding.gzip, body_gz),
-        (accept_encoding.zstd, body_zst),
-        &http_range,
-    ) {
-        (_, (true, Some(body_zst)), None) => (
-            Bytes::from_static(body_zst),
-            Some([(CONTENT_ENCODING, HeaderValue::from_static("zstd"))]),
-        ),
-        ((true, Some(body_gz)), _, None) => (
-            Bytes::from_static(body_gz),
-            Some([(CONTENT_ENCODING, HeaderValue::from_static("gzip"))]),
-        ),
-        _ => (Bytes::from_static(body), None),
-    };
+    let resp_base = (
+        [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
+        accept_ranges,
+        resp_base,
+    );
 
     match serve_file_with_http_range(selected_body, http_range) {
         Ok(body_range) => (resp_base, optional_content_encoding, body_range).into_response(),
