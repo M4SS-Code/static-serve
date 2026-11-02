@@ -11,6 +11,7 @@ use std::{
 
 use display_full_error::DisplayFullError;
 use flate2::write::GzEncoder;
+use mime::Mime;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use sha2::{Digest as _, Sha256};
@@ -771,7 +772,7 @@ impl EmbeddedFileInfo {
                 .strip_prefix(dir)
                 .map_err(|_| Error::CannotMakeFileRelative(pathbuf.clone()))?;
             let mut web_path = normalize_web_path(relative_entry);
-            if should_strip_html_ext.value && content_type == "text/html" {
+            if should_strip_html_ext.value && content_type == mime::TEXT_HTML {
                 strip_html_ext(&mut web_path);
             }
 
@@ -779,6 +780,13 @@ impl EmbeddedFileInfo {
         } else {
             None
         };
+
+        let content_type = if takes_charset(&content_type) && str::from_utf8(&contents).is_ok() {
+            with_utf8_charset(&content_type)
+        } else {
+            content_type
+        };
+        let content_type = content_type.to_string();
 
         let etag_str = etag(&contents);
         let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
@@ -860,6 +868,29 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<(LitByteSt
     })
 }
 
+/// Check if a media type benefits from a `charset` parameter
+///
+/// Without one browsers guess the encoding of most text, and `text/markdown`
+/// requires it. These don't need it: `text/javascript` and `text/calendar`
+/// default to UTF-8, `text/vtt` is always UTF-8 and has no such parameter, and
+/// XML declares its own encoding, which being valid UTF-8 can't rule out.
+fn takes_charset(media_type: &Mime) -> bool {
+    let subtype = media_type.subtype();
+    media_type.type_() == mime::TEXT
+        && media_type.get_param(mime::CHARSET).is_none()
+        && subtype != mime::JAVASCRIPT
+        && subtype != "calendar"
+        && subtype != "vtt"
+        && subtype != mime::XML
+}
+
+/// Add `charset=utf-8` to a media type, keeping its other parameters
+fn with_utf8_charset(media_type: &Mime) -> Mime {
+    format!("{media_type}; {}={}", mime::CHARSET, mime::UTF_8)
+        .parse()
+        .expect("adding a parameter to a valid media type should keep it valid")
+}
+
 /// Use `mime_guess` to get the best guess of the file's MIME type
 /// by looking at its extension, or return an error if unable.
 ///
@@ -868,10 +899,10 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<(LitByteSt
 ///
 /// We accept the first guess because [`mime_guess` updates the order
 /// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
-fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<String, error::Error> {
+fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime, error::Error> {
     let Some(ext) = path.extension() else {
         return if allow_unknown_extensions {
-            Ok(mime_guess::mime::APPLICATION_OCTET_STREAM.to_string())
+            Ok(mime::APPLICATION_OCTET_STREAM)
         } else {
             Err(error::Error::UnknownFileExtension(None))
         };
@@ -884,12 +915,11 @@ fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Stri
     let guess = mime_guess::MimeGuess::from_ext(ext);
 
     if allow_unknown_extensions {
-        return Ok(guess.first_or_octet_stream().to_string());
+        return Ok(guess.first_or_octet_stream());
     }
 
     guess
-        .first_raw()
-        .map(ToOwned::to_owned)
+        .first()
         .ok_or(error::Error::UnknownFileExtension(Some(ext.into())))
 }
 

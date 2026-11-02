@@ -412,6 +412,7 @@ version = "0.6.4"
 dependencies = [
  "display_full_error",
  "flate2",
+ "mime",
  "mime_guess",
  "proc-macro2",
  "quote",

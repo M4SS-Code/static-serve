@@ -352,7 +352,10 @@ async fn strips_html_correctly() {
     let response = get_response(router.clone(), request).await;
     let (parts, body) = response.into_parts();
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -364,7 +367,10 @@ async fn strips_html_correctly() {
     let response = get_response(router, request).await;
     let (parts, body) = response.into_parts();
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -393,7 +399,10 @@ async fn doesnt_strip_html_when_strip_html_false() {
     let response = get_response(router, request).await;
     let (parts, body) = response.into_parts();
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -418,7 +427,10 @@ async fn doesnt_strip_html_when_not_specified() {
     let response = get_response(router, request).await;
     let (parts, body) = response.into_parts();
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/html");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -442,7 +454,10 @@ async fn handles_one_file_uncompressed() {
     let (parts, body) = response.into_parts();
 
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/plain; charset=utf-8"
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -789,7 +804,10 @@ async fn using_both_macros_together_works() {
     let (parts, body) = response.into_parts();
 
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/plain; charset=utf-8"
+    );
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
@@ -814,7 +832,10 @@ async fn handles_one_file_with_cache_control() {
     let (parts, body) = response.into_parts();
 
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/plain; charset=utf-8"
+    );
     assert!(
         parts
             .headers
@@ -848,7 +869,10 @@ async fn handles_one_file_with_cache_control_denied() {
     let (parts, body) = response.into_parts();
 
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/plain; charset=utf-8"
+    );
     assert!(parts.headers.get("cache-control").is_none());
     assert!(parts.headers.contains_key("etag"));
 
@@ -944,7 +968,10 @@ async fn using_both_macros_with_cache_busting_works() {
     let (parts, body) = response.into_parts();
 
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/plain");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/plain; charset=utf-8"
+    );
     assert!(
         parts
             .headers
@@ -978,7 +1005,10 @@ async fn handles_dir_with_cache_control_on_single_file() {
     let (parts, body) = response.into_parts();
 
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/css");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/css; charset=utf-8"
+    );
     assert!(
         parts
             .headers
@@ -1030,7 +1060,10 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
     let (parts, body) = response.into_parts();
 
     assert!(parts.status.is_success());
-    assert_eq!(parts.headers.get("content-type").unwrap(), "text/css");
+    assert_eq!(
+        parts.headers.get("content-type").unwrap(),
+        "text/css; charset=utf-8"
+    );
     assert!(
         parts
             .headers

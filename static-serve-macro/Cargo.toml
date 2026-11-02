@@ -15,6 +15,7 @@ proc-macro = true
 [dependencies]
 display_full_error = "1.1"
 flate2 = "1.1"
+mime = "0.3.17"
 mime_guess = "2.0.5"
 proc-macro2 = "1.0"
 quote = "1.0"
