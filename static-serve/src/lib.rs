@@ -259,7 +259,7 @@ fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
 ///
 /// ```compile_fail
 /// static_serve::embed_assets!(
-///     "../static-serve/test_collision",
+///     "../static-serve/test_fixtures/collision",
 ///     strip_html_ext = true
 /// );
 /// ```

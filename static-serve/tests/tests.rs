@@ -69,7 +69,10 @@ fn decompress_gzip(compressed_body: &[u8]) -> Vec<u8> {
 
 #[tokio::test]
 async fn router_created_with_lit_str() {
-    embed_assets!("../static-serve/test_assets/small", compress = false);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/small",
+        compress = false
+    );
     let router: Router<()> = static_router();
     assert!(router.has_routes());
     let request = create_request("/app.js", &Compression::None);
@@ -83,13 +86,16 @@ async fn router_created_with_lit_str() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../test_assets/small/app.js");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/small/app.js");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn router_created_uncompressed_because_not_worthwhile() {
-    embed_assets!("../static-serve/test_assets/small", compress = true);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/small",
+        compress = true
+    );
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -105,13 +111,13 @@ async fn router_created_uncompressed_because_not_worthwhile() {
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     // Response should not be compressed since the benefit is insignificant
-    let expected_body_bytes = include_bytes!("../../test_assets/small/app.js");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/small/app.js");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn router_created_compressed_zstd_only() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -135,17 +141,17 @@ async fn router_created_compressed_zstd_only() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn router_created_compressed_gzip_only() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -168,18 +174,18 @@ async fn router_created_compressed_gzip_only() {
 
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js"),
+        include_bytes!("../../test_fixtures/assets/big/app.js"),
         "decompressed body is not as expected"
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.gz");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.gz");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn router_created_compressed_zstd_or_gzip_accepted() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -201,17 +207,20 @@ async fn router_created_compressed_zstd_or_gzip_accepted() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn router_created_ignore_paths_one() {
-    embed_assets!("../static-serve/test_assets", ignore_paths = ["dist"]);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets",
+        ignore_paths = ["dist"]
+    );
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -221,7 +230,7 @@ async fn router_created_ignore_paths_one() {
     assert!(parts.status.is_success());
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../test_assets/small/app.js");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/small/app.js");
 
     assert_eq!(
         parts.headers.get("content-type").unwrap(),
@@ -234,7 +243,7 @@ async fn router_created_ignore_paths_one() {
 #[tokio::test]
 async fn router_created_ignore_paths_three() {
     embed_assets!(
-        "../static-serve/test_assets",
+        "../static-serve/test_fixtures/assets",
         ignore_paths = ["big", "small", "dist", "with_html"]
     );
     let router: Router<()> = static_router();
@@ -253,7 +262,7 @@ async fn router_created_ignore_paths_three() {
 
 #[tokio::test]
 async fn handles_conditional_requests_same_etag() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -278,11 +287,11 @@ async fn handles_conditional_requests_same_etag() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     let request = Request::builder()
@@ -307,7 +316,7 @@ async fn handles_conditional_requests_same_etag() {
 
 #[tokio::test]
 async fn handles_conditional_requests_different_etag() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -335,18 +344,18 @@ async fn handles_conditional_requests_different_etag() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn strips_html_correctly() {
     embed_assets!(
-        "../static-serve/test_assets/with_html",
+        "../static-serve/test_fixtures/assets/with_html",
         compress = false,
         strip_html_ext = true
     );
@@ -362,7 +371,7 @@ async fn strips_html_correctly() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index.html");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/with_html/index.html");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     // Test `.htm`
@@ -374,14 +383,14 @@ async fn strips_html_correctly() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index2.htm");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/with_html/index2.htm");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn doesnt_strip_html_when_strip_html_false() {
     embed_assets!(
-        "../static-serve/test_assets/with_html",
+        "../static-serve/test_fixtures/assets/with_html",
         compress = false,
         strip_html_ext = false
     );
@@ -403,13 +412,16 @@ async fn doesnt_strip_html_when_strip_html_false() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index.html");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/with_html/index.html");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn doesnt_strip_html_when_not_specified() {
-    embed_assets!("../static-serve/test_assets/with_html", compress = false);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/with_html",
+        compress = false
+    );
     let router: Router<()> = static_router();
     assert!(router.has_routes());
 
@@ -428,7 +440,7 @@ async fn doesnt_strip_html_when_not_specified() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../test_assets/with_html/index.html");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/with_html/index.html");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
@@ -436,7 +448,7 @@ async fn doesnt_strip_html_when_not_specified() {
 async fn handles_one_file_uncompressed() {
     let router: Router<()> = Router::new();
     let handler = embed_asset!(
-        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        "../static-serve/test_fixtures/assets/dist/ignore_me_plz.txt",
         compress = true
     );
     let router = router.route("/ignore", handler);
@@ -452,15 +464,17 @@ async fn handles_one_file_uncompressed() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes =
-        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/ignore_me_plz.txt");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn handles_one_file_compressed_zstd() {
     let router: Router<()> = Router::new();
-    let handler = embed_asset!("../static-serve/test_assets/big/app.js", compress = true);
+    let handler = embed_asset!(
+        "../static-serve/test_fixtures/assets/big/app.js",
+        compress = true
+    );
     let router = router.route("/app.js", handler);
     assert!(router.has_routes());
 
@@ -482,11 +496,11 @@ async fn handles_one_file_compressed_zstd() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
@@ -494,7 +508,7 @@ async fn handles_one_file_compressed_zstd() {
 async fn handles_one_file_same_etag_with_cache_control() {
     let router: Router<()> = Router::new();
     let handler = embed_asset!(
-        "../static-serve/test_assets/big/app.js",
+        "../static-serve/test_fixtures/assets/big/app.js",
         compress = true,
         cache_bust = true
     );
@@ -523,11 +537,11 @@ async fn handles_one_file_same_etag_with_cache_control() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     let request = Request::builder()
@@ -564,7 +578,7 @@ async fn handles_one_file_same_etag_with_cache_control() {
 async fn handles_one_file_different_etag_with_cache_control() {
     let router: Router<()> = Router::new();
     let handler = embed_asset!(
-        "../static-serve/test_assets/big/app.js",
+        "../static-serve/test_fixtures/assets/big/app.js",
         compress = true,
         cache_bust = true
     );
@@ -598,11 +612,11 @@ async fn handles_one_file_different_etag_with_cache_control() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     let request = Request::builder()
@@ -628,11 +642,11 @@ async fn handles_one_file_different_etag_with_cache_control() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
@@ -640,7 +654,7 @@ async fn handles_one_file_different_etag_with_cache_control() {
 async fn handles_one_file_same_etag_no_cache_control() {
     let router: Router<()> = Router::new();
     let handler = embed_asset!(
-        "../static-serve/test_assets/big/app.js",
+        "../static-serve/test_fixtures/assets/big/app.js",
         compress = true,
         cache_bust = false
     );
@@ -670,11 +684,11 @@ async fn handles_one_file_same_etag_no_cache_control() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     let request = Request::builder()
@@ -703,7 +717,7 @@ async fn handles_one_file_same_etag_no_cache_control() {
 async fn handles_one_file_different_etag_no_cache_control() {
     let router: Router<()> = Router::new();
     let handler = embed_asset!(
-        "../static-serve/test_assets/big/app.js",
+        "../static-serve/test_fixtures/assets/big/app.js",
         compress = true,
         cache_bust = false
     );
@@ -729,11 +743,11 @@ async fn handles_one_file_different_etag_no_cache_control() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     let request = Request::builder()
@@ -760,19 +774,19 @@ async fn handles_one_file_different_etag_no_cache_control() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn using_both_macros_together_works() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
-    let handler = embed_asset!("../static-serve/test_assets/dist/ignore_me_plz.txt");
+    let handler = embed_asset!("../static-serve/test_fixtures/assets/dist/ignore_me_plz.txt");
     let router = router.route("/ignore", handler);
 
     // Get app.js (created by `embed_assets!`)
@@ -796,11 +810,11 @@ async fn using_both_macros_together_works() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     // Get `ignore_me_plz.txt` (mapped to `/ignore`, created by `embed_asset!`)
@@ -814,8 +828,7 @@ async fn using_both_macros_together_works() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes =
-        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/ignore_me_plz.txt");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
@@ -823,7 +836,7 @@ async fn using_both_macros_together_works() {
 async fn handles_one_file_with_cache_control() {
     let router: Router<()> = Router::new();
     let handler = embed_asset!(
-        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        "../static-serve/test_fixtures/assets/dist/ignore_me_plz.txt",
         compress = true,
         cache_bust = true
     );
@@ -849,8 +862,7 @@ async fn handles_one_file_with_cache_control() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes =
-        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/ignore_me_plz.txt");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
@@ -858,7 +870,7 @@ async fn handles_one_file_with_cache_control() {
 async fn handles_one_file_with_cache_control_denied() {
     let router: Router<()> = Router::new();
     let handler = embed_asset!(
-        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        "../static-serve/test_fixtures/assets/dist/ignore_me_plz.txt",
         compress = true,
         cache_bust = false
     );
@@ -876,21 +888,20 @@ async fn handles_one_file_with_cache_control_denied() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes =
-        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/ignore_me_plz.txt");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn using_both_macros_with_cache_busting_works() {
     embed_assets!(
-        "../static-serve/test_assets/big",
+        "../static-serve/test_fixtures/assets/big",
         compress = true,
         cache_busted_paths = ["immutable"]
     );
     let router: Router<()> = static_router();
     let handler = embed_asset!(
-        "../static-serve/test_assets/dist/ignore_me_plz.txt",
+        "../static-serve/test_fixtures/assets/dist/ignore_me_plz.txt",
         cache_bust = true
     );
     let router = router.route("/ignore", handler);
@@ -917,11 +928,11 @@ async fn using_both_macros_with_cache_busting_works() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/app.js")
+        include_bytes!("../../test_fixtures/assets/big/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     // Get /big/immutable/app.js (created by `embed_assets!`, cache-busted)
@@ -954,11 +965,11 @@ async fn using_both_macros_with_cache_busting_works() {
     let decompressed_body = decompress_zstd(&collected_body_bytes);
     assert_eq!(
         decompressed_body,
-        include_bytes!("../../test_assets/big/immutable/app.js")
+        include_bytes!("../../test_fixtures/assets/big/immutable/app.js")
     );
 
     // Expect the compressed version
-    let expected_body_bytes = include_bytes!("../../test_assets/dist/app.js.zst");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/app.js.zst");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     // Get `ignore_me_plz.txt` (mapped to `/ignore`, created by `embed_asset!`)
@@ -981,15 +992,14 @@ async fn using_both_macros_with_cache_busting_works() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes =
-        include_bytes!("../../../static-serve/test_assets/dist/ignore_me_plz.txt");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/dist/ignore_me_plz.txt");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn handles_dir_with_cache_control_on_single_file() {
     embed_assets!(
-        "../static-serve/test_assets/small",
+        "../static-serve/test_fixtures/assets/small",
         compress = true,
         cache_busted_paths = ["styles.css"]
     );
@@ -1016,7 +1026,7 @@ async fn handles_dir_with_cache_control_on_single_file() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/styles.css");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/small/styles.css");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     // app.js should not be immutable / cache-busted
@@ -1034,14 +1044,14 @@ async fn handles_dir_with_cache_control_on_single_file() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/app.js");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/small/app.js");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn handles_dir_with_cache_control_on_filename_and_dir() {
     embed_assets!(
-        "../static-serve/test_assets/small",
+        "../static-serve/test_fixtures/assets/small",
         compress = true,
         cache_busted_paths = [".", "styles.css"]
     );
@@ -1068,7 +1078,7 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/styles.css");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/small/styles.css");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 
     // app.js should be immutable / cache-busted, too
@@ -1094,14 +1104,14 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
     assert!(parts.headers.contains_key("etag"));
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected_body_bytes = include_bytes!("../../../static-serve/test_assets/small/app.js");
+    let expected_body_bytes = include_bytes!("../../test_fixtures/assets/small/app.js");
     assert_eq!(*collected_body_bytes, *expected_body_bytes);
 }
 
 #[tokio::test]
 async fn router_created_ignore_paths() {
     embed_assets!(
-        "../static-serve/test_assets/small",
+        "../static-serve/test_fixtures/assets/small",
         ignore_paths = ["app.js"]
     );
     let router: Router<()> = static_router();
@@ -1125,7 +1135,7 @@ async fn router_created_ignore_paths() {
 #[tokio::test]
 async fn router_created_ignore_multiple_files() {
     embed_assets!(
-        "../static-serve/test_assets/big",
+        "../static-serve/test_fixtures/assets/big",
         ignore_paths = ["app.js", "styles.css"]
     );
     let router: Router<()> = static_router();
@@ -1158,7 +1168,10 @@ async fn router_created_ignore_multiple_files() {
 
 #[tokio::test]
 async fn range_request_returns_206_with_partial_body() {
-    embed_assets!("../static-serve/test_assets/small", compress = false);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/small",
+        compress = false
+    );
     let router: Router<()> = static_router();
 
     let request = Request::builder()
@@ -1173,13 +1186,16 @@ async fn range_request_returns_206_with_partial_body() {
     assert_eq!(parts.headers.get(ACCEPT_RANGES).unwrap(), "bytes");
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected = &include_bytes!("../../test_assets/small/app.js")[..5];
+    let expected = &include_bytes!("../../test_fixtures/assets/small/app.js")[..5];
     assert_eq!(*collected_body_bytes, *expected);
 }
 
 #[tokio::test]
 async fn unsatisfiable_range_returns_416() {
-    embed_assets!("../static-serve/test_assets/small", compress = false);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/small",
+        compress = false
+    );
     let router: Router<()> = static_router();
 
     let request = Request::builder()
@@ -1196,7 +1212,10 @@ async fn unsatisfiable_range_returns_416() {
 
 #[tokio::test]
 async fn accept_ranges_present_on_200() {
-    embed_assets!("../static-serve/test_assets/small", compress = false);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/small",
+        compress = false
+    );
     let router: Router<()> = static_router();
 
     let request = create_request("/app.js", &Compression::None);
@@ -1208,7 +1227,7 @@ async fn accept_ranges_present_on_200() {
 
 #[tokio::test]
 async fn accept_ranges_absent_on_304() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
 
     // First request to get the etag
@@ -1234,7 +1253,7 @@ async fn accept_ranges_absent_on_304() {
 
 #[tokio::test]
 async fn range_request_disables_compression() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
 
     // Request with both Range and Accept-Encoding: zstd
@@ -1252,13 +1271,16 @@ async fn range_request_disables_compression() {
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
     // Should be the first 5 bytes of the uncompressed body
-    let expected = &include_bytes!("../../test_assets/big/app.js")[..5];
+    let expected = &include_bytes!("../../test_fixtures/assets/big/app.js")[..5];
     assert_eq!(*collected_body_bytes, *expected);
 }
 
 #[tokio::test]
 async fn if_range_matching_etag_honors_range() {
-    embed_assets!("../static-serve/test_assets/small", compress = false);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/small",
+        compress = false
+    );
     let router: Router<()> = static_router();
 
     // First get the etag
@@ -1279,13 +1301,16 @@ async fn if_range_matching_etag_honors_range() {
     assert_eq!(parts.headers.get("content-range").unwrap(), "bytes 0-4/30");
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected = &include_bytes!("../../test_assets/small/app.js")[..5];
+    let expected = &include_bytes!("../../test_fixtures/assets/small/app.js")[..5];
     assert_eq!(*collected_body_bytes, *expected);
 }
 
 #[tokio::test]
 async fn if_range_mismatched_etag_returns_full_body() {
-    embed_assets!("../static-serve/test_assets/small", compress = false);
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/small",
+        compress = false
+    );
     let router: Router<()> = static_router();
 
     // Range + If-Range with non-matching etag -> 200 with full body
@@ -1301,13 +1326,13 @@ async fn if_range_mismatched_etag_returns_full_body() {
     assert!(parts.headers.get("content-range").is_none());
 
     let collected_body_bytes = body.into_data_stream().collect().await.unwrap().to_bytes();
-    let expected = include_bytes!("../../test_assets/small/app.js");
+    let expected = include_bytes!("../../test_fixtures/assets/small/app.js");
     assert_eq!(*collected_body_bytes, *expected);
 }
 
 #[tokio::test]
 async fn if_range_mismatched_allows_compression() {
-    embed_assets!("../static-serve/test_assets/big", compress = true);
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
 
     // Range + stale If-Range + Accept-Encoding -> 200 with compression
@@ -1331,7 +1356,7 @@ async fn if_range_mismatched_allows_compression() {
 #[tokio::test]
 async fn serves_unknown_extensions() {
     embed_assets!(
-        "../static-serve/test_unknown_extensions",
+        "../static-serve/test_fixtures/unknown_extensions",
         allow_unknown_extensions = true
     );
     let router: Router<()> = static_router();
@@ -1375,7 +1400,7 @@ async fn allow_unknown_extensions_must_retain_content_type_for_known_extensions(
     // Given a router embedding assets with `allow_unknown_extensions = true` and a file with known
     // extensions (in this case, `app.js`)
     embed_assets!(
-        "../static-serve/test_assets/small",
+        "../static-serve/test_fixtures/assets/small",
         allow_unknown_extensions = true
     );
     let router: Router<()> = static_router();

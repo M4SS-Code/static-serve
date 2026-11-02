@@ -1,2 +1,1 @@
-test_assets/** -text
-test_unknown_extensions/** -text
+test_fixtures/** -text
