@@ -13,7 +13,7 @@ use axum::{
         },
         request::Parts,
     },
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::MethodRouter,
 };
 use bytes::Bytes;
@@ -40,30 +40,42 @@ struct AcceptEncoding {
     wildcard: Option<u16>,
 }
 
+/// The body to answer a request with
+#[derive(Debug, Copy, Clone)]
+enum Selection {
+    /// A compressed body and its content coding
+    Compressed(EmbeddedBody, &'static str),
+    /// The uncompressed body
+    Identity,
+    /// None: `identity` is refused, and so is every compressed body we have
+    NotAcceptable,
+}
+
 impl AcceptEncoding {
-    /// Select the most preferred of the compressed bodies, if any is acceptable
-    /// and not less preferred than `identity` (RFC 9110 section 12.5.3)
+    /// Select the most preferred of the bodies we have (RFC 9110 section
+    /// 12.5.3)
     ///
     /// `*` covers every coding that isn't listed, including `identity`. Ties
     /// prefer zstd over gzip, and either over `identity`. An `identity` that
-    /// is neither listed nor covered by `*` doesn't compete, otherwise
-    /// `gzip;q=0.5` would be refused.
-    fn select(
-        self,
-        body_gz: Option<EmbeddedBody>,
-        body_zst: Option<EmbeddedBody>,
-    ) -> Option<(EmbeddedBody, &'static str)> {
-        let weight = |coding: Option<u16>| coding.or(self.wildcard).unwrap_or(0);
+    /// is neither listed nor covered by `*` stays acceptable but doesn't
+    /// compete, otherwise `gzip;q=0.5` would be refused.
+    fn select(self, body_gz: Option<EmbeddedBody>, body_zst: Option<EmbeddedBody>) -> Selection {
+        let weight = |coding: Option<u16>| coding.or(self.wildcard);
         let identity = weight(self.identity);
-        [
-            (weight(self.gzip), body_gz, "gzip"),
-            (weight(self.zstd), body_zst, "zstd"),
+        let compressed = [
+            (weight(self.gzip).unwrap_or(0), body_gz, "gzip"),
+            (weight(self.zstd).unwrap_or(0), body_zst, "zstd"),
         ]
         .into_iter()
-        .filter(|&(weight, _, _)| weight > 0 && weight >= identity)
+        .filter(|&(weight, _, _)| weight > 0 && weight >= identity.unwrap_or(0))
         .filter_map(|(weight, body, coding)| Some((weight, body?, coding)))
-        .max_by_key(|&(weight, _, _)| weight)
-        .map(|(_, body, coding)| (body, coding))
+        .max_by_key(|&(weight, _, _)| weight);
+
+        match (compressed, identity) {
+            (Some((_, body, coding)), _) => Selection::Compressed(body, coding),
+            (None, Some(0)) => Selection::NotAcceptable,
+            (None, _) => Selection::Identity,
+        }
     }
 }
 
@@ -268,6 +280,33 @@ where
     )
 }
 
+/// Answer a request that refuses every body the asset has
+///
+/// RFC 9110 section 12.5.3 doesn't allow falling back to the refused
+/// `identity`, so this is a 406. It comes before the preconditions, which
+/// section 13.2.1 ignores when the response would otherwise be neither a 2xx
+/// nor a 412. As section 15.5.7 suggests, the content lists the codings the
+/// client could choose from. Cache-Control stays off, so the error can't be
+/// stored.
+fn not_acceptable(body_gz: Option<EmbeddedBody>, body_zst: Option<EmbeddedBody>) -> Response {
+    let codings = [
+        (body_zst.is_some(), "zstd"),
+        (body_gz.is_some(), "gzip"),
+        (true, "identity"),
+    ]
+    .into_iter()
+    .filter_map(|(available, coding)| available.then_some(coding))
+    .collect::<Vec<_>>()
+    .join(", ");
+
+    (
+        StatusCode::NOT_ACCEPTABLE,
+        [(VARY, HeaderValue::from_static("Accept-Encoding"))],
+        format!("Available content codings: {codings}\n"),
+    )
+        .into_response()
+}
+
 fn static_inner(
     content_type: &'static str,
     body: EmbeddedBody,
@@ -292,11 +331,12 @@ fn static_inner(
     };
 
     let (selected, optional_content_encoding) = match accept_encoding.select(body_gz, body_zst) {
-        Some((compressed, coding)) => (
+        Selection::Compressed(compressed, coding) => (
             compressed,
             Some([(CONTENT_ENCODING, HeaderValue::from_static(coding))]),
         ),
-        None => (body, None),
+        Selection::Identity => (body, None),
+        Selection::NotAcceptable => return not_acceptable(body_gz, body_zst),
     };
     let selected_body = Bytes::from_static(selected.bytes);
 

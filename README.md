@@ -95,7 +95,7 @@ This will:
 
 The crate automatically handles:
 
-- `Accept-Encoding` header to serve compressed versions if available
+- `Accept-Encoding` header to serve compressed versions if available, or `406 Not Acceptable` if the uncompressed body is refused and no compressed one is acceptable
 - `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged. The uncompressed, gzip and zstd bodies of a file each have their own `ETag`
 - `If-Match` header, returning `412 Precondition Failed` if no entry matches the `ETag`
 

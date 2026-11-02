@@ -1501,7 +1501,7 @@ async fn accept_encoding_honors_refusals_and_multiple_fields() {
     embed_assets!("../static-serve/test_fixtures/assets/big", compress = true);
     let router: Router<()> = static_router();
 
-    let cases: [(&[&str], Option<&str>); 29] = [
+    let cases: [(&[&str], Option<&str>); 28] = [
         (&["gzip;q=0"], None),
         (&["zstd;q=0"], None),
         (&["gzip ; Q=0.000, zstd;q=0."], None),
@@ -1516,7 +1516,6 @@ async fn accept_encoding_honors_refusals_and_multiple_fields() {
         (&["gzip;q=0.5, identity;q=1"], None),
         (&["gzip, identity"], Some("gzip")),
         (&["*"], Some("zstd")),
-        (&["*;q=0"], None),
         (&["gzip;q=0, *"], Some("zstd")),
         (&["*, zstd;q=0"], Some("gzip")),
         (&["*, identity;q=0"], Some("zstd")),
@@ -1550,6 +1549,61 @@ async fn accept_encoding_honors_refusals_and_multiple_fields() {
             expected,
             "{values:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn refusing_every_body_is_not_acceptable() {
+    embed_assets!(
+        "../static-serve/test_fixtures/assets/big",
+        compress = true,
+        cache_busted_paths = ["immutable"]
+    );
+    let router: Router<()> = static_router();
+
+    // The preconditions are ignored: they only apply to a 2xx or a 412
+    let cases: [&[&str]; 5] = [
+        &["*;q=0"],
+        &["identity;q=0"],
+        &["identity;q=0", "gzip;q=0, zstd;q=0"],
+        &["*;q=0, notgzip"],
+        &["identity;q=0, gzip;q=abc"],
+    ];
+    for values in cases {
+        let mut request = Request::builder()
+            .uri("/immutable/app.js")
+            .header(IF_NONE_MATCH, "*");
+        for value in values {
+            request = request.header(ACCEPT_ENCODING, *value);
+        }
+        let request = request.body(Body::empty()).unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE, "{values:?}");
+        assert_eq!(response.headers().get("vary").unwrap(), "Accept-Encoding");
+        assert!(!response.headers().contains_key("cache-control"));
+        assert!(!response.headers().contains_key("etag"));
+        assert!(!response.headers().contains_key("content-encoding"));
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body, "Available content codings: zstd, gzip, identity\n");
+    }
+
+    // Only the codings the asset has are listed
+    {
+        embed_assets!("../static-serve/test_fixtures/assets/big");
+        let router: Router<()> = static_router();
+        let request = Request::builder()
+            .uri("/app.js")
+            .header(ACCEPT_ENCODING, "identity;q=0, gzip")
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router, request).await;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body, "Available content codings: identity\n");
     }
 }
 
