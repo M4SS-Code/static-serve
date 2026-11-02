@@ -28,13 +28,13 @@ axum = "0.8"
 
 ### Embedding a directory of static assets
 
-Use the `embed_assets!` macro to create a `static_router()` function in scope which will include your static files, embedding them into your binary:
+Use the `embed_assets!` macro to create a `Router` which will include your static files, embedding them into your binary:
 
 ```rust,ignore
+use axum::Router;
 use static_serve::embed_assets;
 
-embed_assets!("assets", compress = true, ignore_paths = ["temp.txt","temp"], cache_busted_paths = ["immutable"]);
-let router = static_router();
+let router: Router = embed_assets!("assets", compress = true, ignore_paths = ["temp.txt","temp"], cache_busted_paths = ["immutable"]);
 ```
 
 This will:
@@ -42,7 +42,7 @@ This will:
 - Include all files from the `assets` directory except `temp.txt` and the `temp` directory
 - Compress them using `gzip` and `zstd` (if beneficial)
 - For only files in `assets/immutable`, add a `Cache-Control` header with `public, max-age=31536000, immutable` (since these are marked as cache-busted paths)
-- Generate a `static_router()` function to serve these assets
+- Evaluate to a `Router` serving these assets
 
 #### Required parameter
 
@@ -113,11 +113,9 @@ use axum::Router;
 use static_serve::{embed_asset, embed_assets};
 use tokio::net::TcpListener;
 
-embed_assets!("public", compress = true);
-
 #[tokio::main]
 async fn main() {
-    let router: Router<()> = static_router();
+    let router: Router = embed_assets!("public", compress = true);
     let my_file_handler = embed_asset!("other_files/my_file.txt");
     let router = router.route("/other_files/my_file.txt", my_file_handler);
 

@@ -26,9 +26,8 @@ use error::{Error, GzipType, ZstdType};
 #[proc_macro]
 /// Embed and optionally compress a directory of static assets for a web server
 ///
-/// Generates a `pub fn static_router<S>() -> axum::Router<S>` in the current
-/// scope, with one route per file. The path is relative to the directory
-/// containing `Cargo.toml`.
+/// Evaluates to an `axum::Router` with one route per file. The path is relative
+/// to the directory containing `Cargo.toml`.
 ///
 /// The options are `compress`, `ignore_paths`, `strip_html_ext`,
 /// `cache_busted_paths`, `allow_unknown_extensions` and `utf8_charset`. See the
@@ -614,9 +613,9 @@ fn generate_static_routes(
     }
 
     Ok(quote! {
-    pub fn static_router<S>() -> ::axum::Router<S>
-        where S: ::std::clone::Clone + ::std::marker::Send + ::std::marker::Sync + 'static {
-            let mut router = ::axum::Router::<S>::new();
+        {
+            #[allow(unused_mut)]
+            let mut router = ::axum::Router::new();
             #(#routes)*
             router
         }
