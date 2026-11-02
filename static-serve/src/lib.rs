@@ -9,7 +9,7 @@ use axum::{
         StatusCode,
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
-            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, VARY,
+            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, IF_RANGE, VARY,
         },
         request::Parts,
     },
@@ -17,10 +17,7 @@ use axum::{
     routing::MethodRouter,
 };
 use bytes::Bytes;
-use range_requests::{
-    headers::{if_range::IfRange, range::HttpRange},
-    serve_file_with_http_range,
-};
+use range_requests::{headers::range::HttpRange, serve_file_with_http_range};
 
 pub use static_serve_macro::{embed_asset, embed_assets};
 
@@ -114,6 +111,7 @@ fn is_wildcard(values: &[HeaderValue]) -> bool {
 struct Conditions {
     matching: Vec<HeaderValue>,
     not_matching: Vec<HeaderValue>,
+    range_validator: Vec<HeaderValue>,
 }
 
 impl Conditions {
@@ -122,6 +120,7 @@ impl Conditions {
         Self {
             matching: values(IF_MATCH),
             not_matching: values(IF_NONE_MATCH),
+            range_validator: values(IF_RANGE),
         }
     }
 
@@ -145,6 +144,20 @@ impl Conditions {
                 candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
             })
     }
+
+    /// Check if `If-Range` is absent, or holds exactly `etag`
+    ///
+    /// Bytes are compared directly since any other value is false: the
+    /// comparison is strong, and we don't send `Last-Modified` for a date to
+    /// match. A value we can't interpret must fail too, not count as absent,
+    /// because RFC 9110 section 13.1.5 only allows a range if it matches.
+    fn if_range_passes(&self, etag: &str) -> bool {
+        match self.range_validator.as_slice() {
+            [] => true,
+            [value] => value.as_bytes().trim_ascii() == etag.as_bytes(),
+            _ => false,
+        }
+    }
 }
 
 /// Everything a request can ask of a static asset
@@ -153,7 +166,6 @@ struct StaticRequest {
     accept_encoding: AcceptEncoding,
     conditions: Conditions,
     http_range: Option<HttpRange>,
-    if_range: Option<IfRange>,
 }
 
 impl<S> FromRequestParts<S> for StaticRequest
@@ -167,7 +179,6 @@ where
             accept_encoding: AcceptEncoding::from_headers(&parts.headers),
             conditions: Conditions::from_headers(&parts.headers),
             http_range: Option::from_request_parts(parts, state).await?,
-            if_range: Option::from_request_parts(parts, state).await?,
         })
     }
 }
@@ -226,7 +237,6 @@ fn static_inner(
         accept_encoding,
         conditions,
         http_range,
-        if_range,
     } = request;
 
     let optional_cache_control = if cache_busted {
@@ -290,13 +300,8 @@ fn static_inner(
     // a different `ETag` would make the outcome of the preconditions above
     // depend on `Range`. RFC 9110 section 14.2 lets us ignore `Range` instead.
     let is_identity = optional_content_encoding.is_none();
-    let http_range = match (http_range.filter(|_| is_identity), if_range) {
-        (Some(range), Some(if_range)) => {
-            let etag_value = HeaderValue::from_static(selected.etag);
-            if_range.evaluate(range, None, Some(&etag_value))
-        }
-        (range, _) => range,
-    };
+    let http_range =
+        http_range.filter(|_| is_identity && conditions.if_range_passes(selected.etag));
     let accept_ranges = is_identity.then_some([(ACCEPT_RANGES, HeaderValue::from_static("bytes"))]);
 
     match serve_file_with_http_range(selected_body, http_range) {
