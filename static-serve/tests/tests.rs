@@ -1645,3 +1645,22 @@ async fn error_responses_are_not_cacheable_and_have_no_content_type() {
         assert!(!response.headers().contains_key("content-type"));
     }
 }
+
+#[tokio::test]
+async fn entity_tag_containing_a_star_is_not_a_wildcard() {
+    embed_assets!("../static-serve/test_fixtures/assets/big", compress = false);
+    let router: Router<()> = static_router();
+
+    for (header, status) in [
+        (IF_NONE_MATCH, StatusCode::OK),
+        (IF_MATCH, StatusCode::PRECONDITION_FAILED),
+    ] {
+        let request = Request::builder()
+            .uri("/app.js")
+            .header(header, "\"a,*,b\"")
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), status);
+    }
+}

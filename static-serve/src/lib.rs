@@ -98,6 +98,16 @@ fn entity_tags(values: &[HeaderValue]) -> impl Iterator<Item = &[u8]> {
         .map(<[u8]>::trim_ascii)
 }
 
+/// Check if a field is the `*` wildcard
+///
+/// `*` is only valid as a whole field value. Looking for it among the entries
+/// of [`entity_tags`] would also find it in a tag like `"a,*,b"`.
+fn is_wildcard(values: &[HeaderValue]) -> bool {
+    values
+        .iter()
+        .any(|value| value.as_bytes().trim_ascii() == b"*")
+}
+
 /// The values of every `If-Match` header in the request
 #[derive(Debug)]
 struct IfMatch(Vec<HeaderValue>);
@@ -115,8 +125,8 @@ impl IfMatch {
     /// (RFC 9110 section 13.1.1).
     fn passes(&self, etag: &str) -> bool {
         self.0.is_empty()
-            || entity_tags(&self.0)
-                .any(|candidate| candidate == b"*" || candidate == etag.as_bytes())
+            || is_wildcard(&self.0)
+            || entity_tags(&self.0).any(|candidate| candidate == etag.as_bytes())
     }
 }
 
@@ -135,10 +145,10 @@ impl IfNoneMatch {
     /// `If-None-Match` uses weak comparison, so a `W/` prefix is ignored
     /// (RFC 9110 section 13.1.2).
     fn matches(&self, etag: &str) -> bool {
-        entity_tags(&self.0).any(|candidate| {
-            candidate == b"*"
-                || candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
-        })
+        is_wildcard(&self.0)
+            || entity_tags(&self.0).any(|candidate| {
+                candidate.strip_prefix(b"W/").unwrap_or(candidate) == etag.as_bytes()
+            })
     }
 }
 
