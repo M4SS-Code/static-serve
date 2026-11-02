@@ -29,6 +29,10 @@ pub(crate) enum Error {
     CannotMakeFileRelative(PathBuf),
     #[error("File path {0} is not utf-8")]
     FilePathIsNotUtf8(PathBuf),
+    #[error(
+        "Web path {web_path} of {file} can't be a route: axum rejects segments starting with `:` or `*`. Rename the file or add it to `ignore_paths`"
+    )]
+    UnsupportedRouteSegment { web_path: String, file: String },
     #[error("Path {0} is outside of the assets directory")]
     PathOutsideAssetsDir(PathBuf),
     #[error("{0} is not a regular file")]

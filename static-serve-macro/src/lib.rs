@@ -25,6 +25,20 @@ use error::{Error, GzipType, ZstdType};
 
 #[proc_macro]
 /// Embed and optionally compress static assets for a web server
+///
+/// # Routes
+///
+/// Each file is routed at its path below the directory, percent-encoded as
+/// browsers encode it: the path percent-encode set of the WHATWG URL Standard
+/// with uppercase hex digits, plus `%` itself as `%25`. `[`, `]` and `|` stay
+/// raw. axum routes on the raw, undecoded request path, so only this
+/// spelling matches. Any other spelling of the same path gets 404, such as
+/// lowercase hex digits, an encoded unreserved character like `%61`, `[`,
+/// `]` or `|` encoded by a strict RFC 3986 encoder like Python's
+/// `urllib.parse.quote`, or a raw `%`.
+///
+/// A path segment starting with `:` or `*` can't be a route, and fails the
+/// build.
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
     quote! { #parsed }.into()
@@ -526,14 +540,19 @@ fn generate_static_routes(
             allow_unknown_extensions,
         )?;
 
-        if let Some(web_path) = &entry_path {
-            check_duplicate_web_path(&mut seen_web_paths, web_path, entry_str)?;
+        let mut web_path = None;
+        if let Some(entry_path) = &entry_path {
+            check_route_syntax(entry_path, entry_str)?;
+
+            let encoded = encode_web_path(entry_path);
+            check_duplicate_web_path(&mut seen_web_paths, &encoded, entry_str)?;
+            web_path = Some(encoded);
         }
 
         routes.push(quote! {
             router = ::static_serve::static_route(
                 router,
-                #entry_path,
+                #web_path,
                 #content_type,
                 ::static_serve::EmbeddedBody {
                     bytes: {
@@ -910,6 +929,46 @@ fn normalize_web_path(relative_path: &Path) -> String {
     format!("/{normalized}")
 }
 
+/// Reject path segments that axum refuses as routes, which would otherwise
+/// panic when the `Router` is built
+fn check_route_syntax(web_path: &str, entry_str: &str) -> Result<(), Error> {
+    if web_path
+        .split('/')
+        .any(|segment| segment.starts_with([':', '*']))
+    {
+        return Err(Error::UnsupportedRouteSegment {
+            web_path: web_path.to_owned(),
+            file: entry_str.to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Percent-encode a web path into the spelling browsers request
+///
+/// axum matches routes against the undecoded request path, and treats braces
+/// as captures, so a file's name must be encoded to be reachable. Only one
+/// spelling is registered: the one of the WHATWG URL Standard, which encodes
+/// the path percent-encode set with uppercase hex digits, keeping `[`, `]`
+/// and `|` as they are. `%` is encoded too, so that a name can't be read as
+/// an escape.
+fn encode_web_path(web_path: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut encoded = String::with_capacity(web_path.len());
+    for byte in web_path.bytes() {
+        if byte.is_ascii_graphic() && !b"\"#<>?^`{}%".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0xf)]));
+        }
+    }
+    encoded
+}
+
 /// Strip `.html`/`.htm` from an already-normalized web path in-place,
 /// and map `/index` to its parent directory route.
 fn strip_html_ext(path: &mut String) {
@@ -935,7 +994,7 @@ mod tests {
     use quote::{ToTokens, quote};
     use syn::LitStr;
 
-    use super::{EmbedAssets, is_compression_significant};
+    use super::{EmbedAssets, encode_web_path, is_compression_significant};
 
     /// Expand `embed_assets!` and return the message of the error that fails
     /// the build, if any
@@ -1010,6 +1069,32 @@ mod tests {
             embed_assets_error(quote!(
                 "../test_fixtures/unknown_extensions",
                 allow_unknown_extensions = true
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn web_paths_are_encoded_like_browsers_do() {
+        assert_eq!(
+            encode_web_path("/a b/^`{}|[]%/\"#<>?/caf\u{e9}\u{7f}/~!$&'()*+,;=:@"),
+            "/a%20b/%5E%60%7B%7D|[]%25/%22%23%3C%3E%3F/caf%C3%A9%7F/~!$&'()*+,;=:@"
+        );
+    }
+
+    #[test]
+    fn unsupported_route_segments_fail_the_build() {
+        if !has_fixtures() {
+            return;
+        }
+
+        // axum would refuse the route and panic when the `Router` is built
+        let error = embed_assets_error(quote!("../test_fixtures/route_syntax")).unwrap();
+        assert!(error.contains("can't be a route"), "{error}");
+        assert_eq!(
+            embed_assets_error(quote!(
+                "../test_fixtures/route_syntax",
+                ignore_paths = [":colon.txt"]
             )),
             None
         );
