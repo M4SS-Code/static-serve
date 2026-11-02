@@ -31,21 +31,45 @@ pub struct EmbeddedBody {
     pub etag: &'static str,
 }
 
-/// The accept/reject status for gzip and zstd encoding
-#[derive(Debug, Copy, Clone)]
+/// The weights, in thousandths, listed in `Accept-Encoding`
+#[derive(Debug, Copy, Clone, Default)]
 struct AcceptEncoding {
-    /// Is gzip accepted?
-    pub gzip: bool,
-    /// Is zstd accepted?
-    pub zstd: bool,
+    gzip: Option<u16>,
+    zstd: Option<u16>,
+    identity: Option<u16>,
+    wildcard: Option<u16>,
+}
+
+impl AcceptEncoding {
+    /// Select the most preferred of the compressed bodies, if any is acceptable
+    /// and not less preferred than `identity` (RFC 9110 section 12.5.3)
+    ///
+    /// `*` covers every coding that isn't listed, including `identity`. Ties
+    /// prefer zstd over gzip, and either over `identity`. An `identity` that
+    /// is neither listed nor covered by `*` doesn't compete, otherwise
+    /// `gzip;q=0.5` would be refused.
+    fn select(
+        self,
+        body_gz: Option<EmbeddedBody>,
+        body_zst: Option<EmbeddedBody>,
+    ) -> Option<(EmbeddedBody, &'static str)> {
+        let weight = |coding: Option<u16>| coding.or(self.wildcard).unwrap_or(0);
+        let identity = weight(self.identity);
+        [
+            (weight(self.gzip), body_gz, "gzip"),
+            (weight(self.zstd), body_zst, "zstd"),
+        ]
+        .into_iter()
+        .filter(|&(weight, _, _)| weight > 0 && weight >= identity)
+        .filter_map(|(weight, body, coding)| Some((weight, body?, coding)))
+        .max_by_key(|&(weight, _, _)| weight)
+        .map(|(_, body, coding)| (body, coding))
+    }
 }
 
 impl AcceptEncoding {
     fn from_headers(headers: &HeaderMap) -> Self {
-        let mut accept_encoding = Self {
-            gzip: false,
-            zstd: false,
-        };
+        let mut accept_encoding = Self::default();
 
         let codings = headers
             .get_all(ACCEPT_ENCODING)
@@ -54,33 +78,52 @@ impl AcceptEncoding {
             .flat_map(|value| value.split(','));
         for coding in codings {
             let (name, params) = coding.split_once(';').unwrap_or((coding, ""));
-            if is_refused(params) {
-                continue;
-            }
-
             let name = name.trim();
-            if name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip") {
-                accept_encoding.gzip = true;
+
+            let field = if name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip")
+            {
+                &mut accept_encoding.gzip
             } else if name.eq_ignore_ascii_case("zstd") {
-                accept_encoding.zstd = true;
-            }
+                &mut accept_encoding.zstd
+            } else if name.eq_ignore_ascii_case("identity") {
+                &mut accept_encoding.identity
+            } else if name == "*" {
+                &mut accept_encoding.wildcard
+            } else {
+                continue;
+            };
+            *field = (*field).max(Some(weight(params)));
         }
 
         accept_encoding
     }
 }
 
-/// Check if the parameters of an `Accept-Encoding` entry set `q` to zero
-fn is_refused(params: &str) -> bool {
-    params.split(';').any(|param| {
-        param.split_once('=').is_some_and(|(name, value)| {
-            name.trim().eq_ignore_ascii_case("q")
-                && value
-                    .trim()
-                    .strip_prefix('0')
-                    .is_some_and(|rest| rest.trim_start_matches(['.', '0']).is_empty())
-        })
-    })
+/// Read the weight of an `Accept-Encoding` entry in thousandths
+///
+/// An entry without a `q` parameter counts as fully accepted. A `q` that
+/// isn't a valid `qvalue` counts as zero: treating it as fully accepted would
+/// turn `q=0.0000` or `q=-1` into a preference.
+fn weight(params: &str) -> u16 {
+    params
+        .split(';')
+        .map(|param| param.split_once('=').unwrap_or((param, "")))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("q"))
+        .map_or(1000, |(_, value)| parse_qvalue(value.trim()).unwrap_or(0))
+}
+
+/// Parse a `qvalue` (RFC 9110 section 12.4.2) into thousandths
+fn parse_qvalue(value: &str) -> Option<u16> {
+    let (integer, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if fraction.len() > 3 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    match integer {
+        "0" => format!("{fraction:0<3}").parse().ok(),
+        "1" if fraction.bytes().all(|byte| byte == b'0') => Some(1000),
+        _ => None,
+    }
 }
 
 /// Iterate over the entries of list-based entity-tag header values
@@ -248,19 +291,12 @@ fn static_inner(
         None
     };
 
-    let (selected, optional_content_encoding) = match (
-        (accept_encoding.gzip, body_gz),
-        (accept_encoding.zstd, body_zst),
-    ) {
-        (_, (true, Some(body_zst))) => (
-            body_zst,
-            Some([(CONTENT_ENCODING, HeaderValue::from_static("zstd"))]),
+    let (selected, optional_content_encoding) = match accept_encoding.select(body_gz, body_zst) {
+        Some((compressed, coding)) => (
+            compressed,
+            Some([(CONTENT_ENCODING, HeaderValue::from_static(coding))]),
         ),
-        ((true, Some(body_gz)), _) => (
-            body_gz,
-            Some([(CONTENT_ENCODING, HeaderValue::from_static("gzip"))]),
-        ),
-        _ => (body, None),
+        None => (body, None),
     };
     let selected_body = Bytes::from_static(selected.bytes);
 
