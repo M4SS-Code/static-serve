@@ -1,22 +1,8 @@
 # Static Serve
 
-A Rust library for compressing and embedding static assets in a web server using [Axum](https://github.com/tokio-rs/axum). This crate provides efficient asset embedding with optional compression (`gzip` and `zstd`) and conditional requests support.
+Embed static assets into your [axum](https://github.com/tokio-rs/axum) server at compile time, with gzip and zstd compression. Responses support content negotiation, `ETag`s, conditional requests and byte ranges.
 
-## Features
-
-- **Embed static assets** at compile-time for efficient serving
-
-- **Automatic compression** with `gzip` and `zstd`
-
-- **ETag support** for conditional requests and caching
-
-- **HTTP Range Requests** for partial content responses (RFC 9110)
-
-- **Seamless Axum integration** with request extraction for encoding and caching headers
-
-## Installation
-
-Add the following to your `Cargo.toml`:
+## Usage
 
 ```toml
 [dependencies]
@@ -24,53 +10,55 @@ static-serve = "0.6"
 axum = "0.8"
 ```
 
-## Usage
-
-### Embedding a directory of static assets
-
-Use the `embed_assets!` macro to create a `static_router()` function in scope which will include your static files, embedding them into your binary:
-
 ```rust,ignore
 use axum::Router;
-use static_serve::embed_assets;
+use static_serve::{embed_asset, embed_assets};
+use tokio::net::TcpListener;
 
-embed_assets!("assets", compress = true, ignore_paths = ["temp.txt","temp"], cache_busted_paths = ["immutable"]);
+// Generates `static_router()`, with one route per file in `public`
+embed_assets!("public", compress = true, cache_busted_paths = ["immutable"]);
 
-let router: Router<()> = static_router();
+#[tokio::main]
+async fn main() {
+    let robots = embed_asset!("other/robots.txt");
+    let router: Router = static_router().route("/robots.txt", robots);
+
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, router).await.unwrap();
+}
 ```
 
-This will:
+Relative paths start at the directory containing the crate's `Cargo.toml`.
 
-- Include all files from the `assets` directory except `temp.txt` and the `temp` directory
-- Compress them using `gzip` and `zstd` (if beneficial)
-- For only files in `assets/immutable`, add a `Cache-Control` header with `public, max-age=31536000, immutable` (since these are marked as cache-busted paths)
-- Generate a `static_router()` function to serve these assets
+## Options
 
-#### Required parameter
+| Option | Macro | Default | Effect |
+|---|---|---|---|
+| `compress` | both | `false` | Also embed gzip and zstd bodies, when they save at least 10% |
+| `allow_unknown_extensions` | both | `false` | Serve unknown or missing extensions as `application/octet-stream` instead of failing the build |
+| `cache_bust` | `embed_asset!` | `false` | Send `Cache-Control: public, max-age=31536000, immutable` |
+| `cache_busted_paths` | `embed_assets!` | `[]` | The same, for these files and directories. Their names must already change with their content, for example by including a hash |
+| `ignore_paths` | `embed_assets!` | `[]` | Skip these files and directories |
+| `strip_html_ext` | `embed_assets!` | `false` | Serve `foo.html` at `/foo`, `index.html` at `/` and `docs/index.html` at `/docs/`, with no redirect from `/docs` |
 
-- `path_to_dir` - a valid `&str` string literal of the path to the static files to be included. Relative paths start at the directory containing the crate's `Cargo.toml`
+Paths in `cache_busted_paths` and `ignore_paths` are relative to the embedded directory, and must exist inside of it.
 
-#### Optional parameters
+## Which files are embedded
 
-- `compress = false` - compress static files with zstd and gzip, true or false (defaults to false)
+- Hidden files are embedded like any other. List the ones you don't want in `ignore_paths`.
+- Symlinks are followed and served at the path of the link.
+- Names are percent-encoded in routes, so `my file.png` is served at `/my%20file.png`.
+- A path segment starting with `:` or `*` fails the build, because axum refuses it as a route.
 
-- `ignore_paths = ["my_ignore_dir", "other_ignore_dir", "my_ignore_file.txt"]` - a bracketed list of `&str`s of paths/subdirectories/files inside the target directory, which should be ignored and not included. (If this parameter is missing, no paths/subdirectories/files will be ignored)
+## HTTP behavior
 
-- `strip_html_ext = false` - strips the `.html` or `.htm` from all HTML files included. If the filename is `index.html` or `index.htm`, the `index` part will also be removed, so `index.html` is served at `/` and `docs/index.html` at `/docs/`, with no redirect from `/docs` (defaults to false)
+- The body is selected from `Accept-Encoding`, and each body has its own strong `ETag`.
+- `If-None-Match` and `If-Match` are evaluated against that `ETag`. `Last-Modified` isn't sent, so date-based conditions don't apply.
+- Single byte ranges and `If-Range` are supported on the uncompressed body. `Range` is ignored when a compressed body is selected, so send `Accept-Encoding: identity` to use ranges.
 
-- `cache_busted_paths = ["my_immutables_dir", "my_immutable_file"]` - a bracketed list of `&str`s of the subdirectories and/or single files which should gain the `Cache-Control` header with `public, max-age=31536000, immutable` for cache-busted paths. If this parameter is missing, the default is that no embedded files will have the `Cache-Control` header. Note: the files in `cache_busted_paths` need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header. 
+## Build times
 
-- `allow_unknown_extensions = false` - serve files with unknown extensions as `application/octet-stream` content-type; when not set to `true`, compilation fails if a content type cannot be guessed from the extension, or if the file has no extension
-
-#### Which files are embedded
-
-- Hidden files are embedded like any other file. List the ones you don't want in `ignore_paths`
-- Symlinks are followed and served at the path of the link, not of their target. Entries of `ignore_paths` and `cache_busted_paths` match the link's path, and must be inside the target directory
-- File names are percent-encoded in routes, so `my file.png` is served at `/my%20file.png`. A path segment starting with `:` or `*` is a compile error, because axum refuses it as a route
-
-#### Rebuilding after adding files
-
-Cargo tracks the embedded files, but not the directory: changing or deleting a file triggers a rebuild, while adding one doesn't. To pick up new files, add a `build.rs` to the crate calling the macro:
+Changing or deleting an embedded file triggers a rebuild, but adding one doesn't. To pick up new files, add a `build.rs` next to `Cargo.toml`:
 
 ```rust,ignore
 fn main() {
@@ -78,72 +66,7 @@ fn main() {
 }
 ```
 
-#### Compile times
-
-With `compress = true` every asset is compressed each time the crate calling the macro is compiled, including `cargo check`. If that gets slow, put the macro call in a separate crate containing only the assets, which is rarely recompiled.
-
-### Embedding a single static asset file
-
-Use the `embed_asset!` macro to return a `MethodRouter` serving GET and HEAD, which will include your static file, embedded into your binary:
-
-```rust,ignore
-use axum::Router;
-use static_serve::embed_asset;
-
-let router: Router<()> = Router::new();
-let handler = embed_asset!("assets/my_file.png", compress = true, cache_bust = true);
-let router = router.route("/my_file.png", handler);
-
-```
-
-This will:
-
-- Include the file `my_file.png` from the `assets` directory
-- Compress it using `gzip` and `zstd` (if beneficial)
-- Add a `Cache-Control` header with the value `public, max-age=31536000, immutable` for cache-busted paths. Note: the file in `embed_asset!` needs to already be compatible with cache-busting by having a hash in its file path (for example). All `static-serve` does is set the appropriate header. 
-- Generate a `MethodRouter` "handler" you can add as a route on your router to serve the file
-
-#### Required parameter
-
-- `path_to_file` - a valid `&str` string literal of the path to the static file to be included. Relative paths start at the directory containing the crate's `Cargo.toml`
-
-#### Optional parameters
-
-- `compress = false` - compress a static file with zstd and gzip, true or false (defaults to false)
-- `cache_bust = false` - add a `Cache-Control` header with the value `public, max-age=31536000, immutable` for a cache-busted asset (defaults to false)
-- `allow_unknown_extensions = false` - serve files with unknown extensions as `application/octet-stream` content-type; when not set to `true`, compilation   fails if a content type cannot be guessed from the extension, or if the file has no extension
-
-## Conditional Requests & Caching
-
-The crate automatically handles:
-
-- `Accept-Encoding` header to serve compressed versions if available
-- `If-None-Match` header for ETag validation, returning `304 Not Modified` if unchanged. The uncompressed, gzip and zstd bodies of a file each have their own `ETag`
-- `If-Match` header, returning `412 Precondition Failed` if no entry matches the `ETag`
-
-- With the optional cache-bust headers feature, each embedded file in the `cache_busted_paths` array (or single file in the case of `embed_asset!` with `cache_bust = true`) will be returned with a `Cache-Control` header with the value `public, max-age=31536000, immutable`. Note: the files involved need to already be compatible with cache-busting by having hashes in their file paths (for example). All `static-serve` does is set the appropriate header.
-
-- `Accept-Ranges: bytes` is advertised on uncompressed responses. When a `Range` header is present, the server responds with `206 Partial Content` and the requested byte range, or `416 Range Not Satisfiable` if the range can't be satisfied. Malformed and multi-range values are ignored. Ranges only apply to the uncompressed body, so `Range` is ignored and the full body is served when the request selects a compressed one. Send `Accept-Encoding: identity` to use ranges.
-
-## Example
-
-```rust,ignore
-use axum::Router;
-use static_serve::{embed_asset, embed_assets};
-use tokio::net::TcpListener;
-
-embed_assets!("public", compress = true);
-
-#[tokio::main]
-async fn main() {
-    let router: Router<()> = static_router();
-    let my_file_handler = embed_asset!("other_files/my_file.txt");
-    let router = router.route("/other_files/my_file.txt", my_file_handler);
-
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, router).await.unwrap();
-}
-```
+With `compress = true`, assets are compressed every time the crate calling the macro is compiled, including `cargo check`. If that gets slow, move the macro call into a separate crate.
 
 ## License
 
