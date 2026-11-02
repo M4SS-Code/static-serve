@@ -526,14 +526,23 @@ fn generate_static_routes(
             allow_unknown_extensions,
         )?;
 
+        let mut web_paths = Vec::new();
         if let Some(web_path) = &entry_path {
-            check_duplicate_web_path(&mut seen_web_paths, web_path, entry_str)?;
+            check_route_syntax(web_path, entry_str)?;
+
+            let encoded = encode_web_path(web_path, false);
+            check_duplicate_web_path(&mut seen_web_paths, &encoded, entry_str)?;
+            let lowercase_encoded = encode_web_path(web_path, true);
+            web_paths.push(encoded);
+            if !web_paths.contains(&lowercase_encoded) {
+                web_paths.push(lowercase_encoded);
+            }
         }
 
         routes.push(quote! {
                     router = ::static_serve::static_route(
                         router,
-                        #entry_path,
+                        &[#(#web_paths),*],
                         #content_type,
                         ::static_serve::EmbeddedBody {
          bytes: {
@@ -910,6 +919,48 @@ fn normalize_web_path(relative_path: &Path) -> String {
     format!("/{normalized}")
 }
 
+/// Reject path segments that axum refuses as routes, which would otherwise
+/// panic when the `Router` is built
+fn check_route_syntax(web_path: &str, entry_str: &str) -> Result<(), Error> {
+    if web_path
+        .split('/')
+        .any(|segment| segment.starts_with([':', '*']))
+    {
+        return Err(Error::UnsupportedRouteSegment {
+            web_path: web_path.to_owned(),
+            file: entry_str.to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Percent-encode a web path into the form requested by HTTP clients
+///
+/// axum matches routes against the undecoded request path, and treats braces
+/// as captures, so a file's name must be encoded to be reachable. Clients
+/// differ in the case of hex digits, so both spellings are registered. `[`,
+/// `]` and `|` stay as they are since URL parsers don't encode them either.
+fn encode_web_path(web_path: &str, lowercase_hex: bool) -> String {
+    let hex = if lowercase_hex {
+        b"0123456789abcdef"
+    } else {
+        b"0123456789ABCDEF"
+    };
+
+    let mut encoded = String::with_capacity(web_path.len());
+    for byte in web_path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@[]|".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(hex[usize::from(byte >> 4)]));
+            encoded.push(char::from(hex[usize::from(byte & 0xf)]));
+        }
+    }
+    encoded
+}
+
 /// Strip `.html`/`.htm` from an already-normalized web path in-place,
 /// and map `/index` to its parent directory route.
 fn strip_html_ext(path: &mut String) {
@@ -987,6 +1038,20 @@ mod tests {
             embed_assets_error(quote!(
                 "../test_fixtures/unknown_extensions",
                 allow_unknown_extensions = true
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn unsupported_route_segments_fail_the_build() {
+        // axum would refuse the route and panic when the `Router` is built
+        let error = embed_assets_error(quote!("../test_fixtures/route_syntax")).unwrap();
+        assert!(error.contains("can't be a route"), "{error}");
+        assert_eq!(
+            embed_assets_error(quote!(
+                "../test_fixtures/route_syntax",
+                ignore_paths = [":colon.txt"]
             )),
             None
         );

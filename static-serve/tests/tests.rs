@@ -1758,3 +1758,24 @@ async fn glob_characters_in_the_path_are_literal() {
     let response = get_response(router, create_request("/a.txt", &Compression::None)).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn file_names_are_reachable_at_their_encoded_url() {
+    embed_assets!("../test_fixtures/url_names");
+    let router: Router<()> = static_router();
+
+    for (route, status) in [
+        ("/with%20space.txt", StatusCode::OK),
+        ("/caf%C3%A9.txt", StatusCode::OK),
+        ("/caf%c3%a9.txt", StatusCode::OK),
+        ("/100%25.txt", StatusCode::OK),
+        ("/%7Bbraces%7D.txt", StatusCode::OK),
+        ("/br[1].txt", StatusCode::OK),
+        // Must not act as a capture
+        ("/anything.txt", StatusCode::NOT_FOUND),
+    ] {
+        let response =
+            get_response(router.clone(), create_request(route, &Compression::None)).await;
+        assert_eq!(response.status(), status, "{route}");
+    }
+}

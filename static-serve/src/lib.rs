@@ -224,8 +224,8 @@ where
 #[doc(hidden)]
 /// The router for adding routes for static assets
 pub fn static_route<S>(
-    router: Router<S>,
-    web_path: &'static str,
+    mut router: Router<S>,
+    web_paths: &[&str],
     content_type: &'static str,
     body: EmbeddedBody,
     body_gz: Option<EmbeddedBody>,
@@ -235,10 +235,11 @@ pub fn static_route<S>(
 where
     S: Clone + Send + Sync + 'static,
 {
-    router.route(
-        web_path,
-        static_method_router(content_type, body, body_gz, body_zst, cache_busted),
-    )
+    let method_router = static_method_router(content_type, body, body_gz, body_zst, cache_busted);
+    for web_path in web_paths {
+        router = router.route(web_path, method_router.clone());
+    }
+    router
 }
 
 #[doc(hidden)]
