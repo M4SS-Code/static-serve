@@ -24,7 +24,15 @@ mod error;
 use error::{Error, GzipType, ZstdType};
 
 #[proc_macro]
-/// Embed and optionally compress static assets for a web server
+/// Embed and optionally compress a directory of static assets for a web server
+///
+/// Generates a `pub fn static_router<S>() -> axum::Router<S>` in the current
+/// scope, with one route per file. The path is relative to the directory
+/// containing `Cargo.toml`.
+///
+/// The options are `compress`, `ignore_paths`, `strip_html_ext`,
+/// `cache_busted_paths`, `allow_unknown_extensions` and `utf8_charset`. See the
+/// [`static-serve` documentation](https://docs.rs/static-serve) for details.
 ///
 /// # Routes
 ///
@@ -46,6 +54,13 @@ pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 #[proc_macro]
 /// Embed and optionally compress a single static asset for a web server
+///
+/// Evaluates to an `axum::routing::MethodRouter` serving GET and HEAD. The path
+/// is relative to the directory containing `Cargo.toml`.
+///
+/// The options are `compress`, `cache_bust`, `allow_unknown_extensions` and
+/// `utf8_charset`. See the [`static-serve` documentation](https://docs.rs/static-serve)
+/// for details.
 pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAsset);
     quote! { #parsed }.into()
@@ -944,7 +959,7 @@ fn with_utf8_charset(media_type: &Mime) -> Mime {
 /// will not produce an error, but application/octet-stream.
 ///
 /// We accept the first guess because [`mime_guess` updates the order
-/// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
+/// according to the latest IETF RFC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
 fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime, error::Error> {
     let Some(ext) = path.extension() else {
         return if allow_unknown_extensions {
