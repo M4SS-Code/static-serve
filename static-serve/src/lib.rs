@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 
-use std::{convert::Infallible, future};
+use std::convert::Infallible;
 
 use axum::{
     Router,
@@ -9,7 +9,7 @@ use axum::{
         StatusCode,
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG,
-            HeaderValue, IF_NONE_MATCH, VARY,
+            HeaderMap, HeaderValue, IF_NONE_MATCH, VARY,
         },
         request::Parts,
     },
@@ -33,25 +33,17 @@ struct AcceptEncoding {
     pub zstd: bool,
 }
 
-impl<S> FromRequestParts<S> for AcceptEncoding
-where
-    S: Send + Sync,
-{
-    type Rejection = Infallible;
-
-    fn from_request_parts(
-        parts: &mut Parts,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
-        let accept_encoding = parts.headers.get(ACCEPT_ENCODING);
+impl AcceptEncoding {
+    fn from_headers(headers: &HeaderMap) -> Self {
+        let accept_encoding = headers.get(ACCEPT_ENCODING);
         let accept_encoding = accept_encoding
             .and_then(|accept_encoding| accept_encoding.to_str().ok())
             .unwrap_or_default();
 
-        future::ready(Ok(Self {
+        Self {
             gzip: accept_encoding.contains("gzip"),
             zstd: accept_encoding.contains("zstd"),
-        }))
+        }
     }
 }
 
@@ -60,6 +52,11 @@ where
 struct IfNoneMatch(Option<HeaderValue>);
 
 impl IfNoneMatch {
+    fn from_headers(headers: &HeaderMap) -> Self {
+        let if_none_match = headers.get(IF_NONE_MATCH).cloned();
+        Self(if_none_match)
+    }
+
     /// required function for checking if `IfNoneMatch` is present
     fn matches(&self, etag: &str) -> bool {
         self.0
@@ -68,18 +65,28 @@ impl IfNoneMatch {
     }
 }
 
-impl<S> FromRequestParts<S> for IfNoneMatch
+/// Everything a request can ask of a static asset
+#[derive(Debug)]
+struct StaticRequest {
+    accept_encoding: AcceptEncoding,
+    if_none_match: IfNoneMatch,
+    http_range: Option<HttpRange>,
+    if_range: Option<IfRange>,
+}
+
+impl<S> FromRequestParts<S> for StaticRequest
 where
     S: Send + Sync,
 {
     type Rejection = Infallible;
 
-    fn from_request_parts(
-        parts: &mut Parts,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> {
-        let if_none_match = parts.headers.get(IF_NONE_MATCH).cloned();
-        future::ready(Ok(Self(if_none_match)))
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self {
+            accept_encoding: AcceptEncoding::from_headers(&parts.headers),
+            if_none_match: IfNoneMatch::from_headers(&parts.headers),
+            http_range: Option::from_request_parts(parts, state).await?,
+            if_range: Option::from_request_parts(parts, state).await?,
+        })
     }
 }
 
@@ -122,57 +129,35 @@ where
 {
     MethodRouter::get(
         MethodRouter::new(),
-        move |accept_encoding: AcceptEncoding,
-              if_none_match: IfNoneMatch,
-              http_range: Option<HttpRange>,
-              if_range: Option<IfRange>| async move {
-            static_inner(StaticInnerData {
+        move |request: StaticRequest| async move {
+            static_inner(
                 content_type,
                 etag,
                 body,
                 body_gz,
                 body_zst,
                 cache_busted,
-                accept_encoding,
-                if_none_match,
-                http_range,
-                if_range,
-            })
+                request,
+            )
         },
     )
 }
 
-/// Struct of parameters for `static_inner` (to avoid `clippy::too_many_arguments`)
-///
-/// This differs from `StaticRouteData` because it
-/// includes the `AcceptEncoding` and `IfNoneMatch` fields
-/// and excludes the `web_path`
-struct StaticInnerData {
+fn static_inner(
     content_type: &'static str,
     etag: &'static str,
     body: &'static [u8],
     body_gz: Option<&'static [u8]>,
     body_zst: Option<&'static [u8]>,
     cache_busted: bool,
-    accept_encoding: AcceptEncoding,
-    if_none_match: IfNoneMatch,
-    http_range: Option<HttpRange>,
-    if_range: Option<IfRange>,
-}
-
-fn static_inner(static_inner_data: StaticInnerData) -> impl IntoResponse {
-    let StaticInnerData {
-        content_type,
-        etag,
-        body,
-        body_gz,
-        body_zst,
-        cache_busted,
+    request: StaticRequest,
+) -> impl IntoResponse {
+    let StaticRequest {
         accept_encoding,
         if_none_match,
         http_range,
         if_range,
-    } = static_inner_data;
+    } = request;
 
     let optional_cache_control = if cache_busted {
         Some([(
