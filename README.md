@@ -60,6 +60,8 @@ This will:
 
 - `allow_unknown_extensions = false` - serve files with unknown extensions as `application/octet-stream` content-type; when not set to `true`, compilation fails if a content type cannot be guessed from the extension, or if the file has no extension
 
+- `utf8_charset = true` - add `charset=utf-8` to the `Content-Type` of text files that are valid UTF-8 (defaults to true). Types that default to UTF-8 or declare their own encoding are left alone: `text/javascript`, `text/calendar`, `text/vtt` and `text/xml`. Set it to `false` if the server or a layer above the router sets the charset, or for HTML that declares a legacy encoding with `<meta charset>` while only containing ASCII: browsers let the HTTP charset override `<meta>`, which also changes the encoding of the forms and URLs the page submits
+
 ### Embedding a single static asset file
 
 Use the `embed_asset!` macro to return a function you can use as a GET handler, which will include your static file, embedded into your binary:
@@ -90,6 +92,7 @@ This will:
 - `compress = false` - compress a static file with zstd and gzip, true or false (defaults to false)
 - `cache_bust = false` - add a `Cache-Control` header with the value `public, max-age=31536000, immutable` for a cache-busted asset (defaults to false)
 - `allow_unknown_extensions = false` - serve files with unknown extensions as `application/octet-stream` content-type; when not set to `true`, compilation   fails if a content type cannot be guessed from the extension, or if the file has no extension
+- `utf8_charset = true` - add `charset=utf-8` to the `Content-Type` of text files that are valid UTF-8 (defaults to true). Types that default to UTF-8 or declare their own encoding are left alone: `text/javascript`, `text/calendar`, `text/vtt` and `text/xml`. Set it to `false` if the server or a layer above the router sets the charset, or for HTML that declares a legacy encoding with `<meta charset>` while only containing ASCII: browsers let the HTTP charset override `<meta>`, which also changes the encoding of the forms and URLs the page submits
 
 ## Conditional Requests & Caching
 

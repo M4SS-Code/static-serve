@@ -11,6 +11,7 @@ use std::{
 
 use display_full_error::DisplayFullError;
 use flate2::write::GzEncoder;
+use mime::Mime;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use sha2::{Digest as _, Sha256};
@@ -68,6 +69,7 @@ struct EmbedAsset {
     should_compress: ShouldCompress,
     cache_busted: IsCacheBusted,
     allow_unknown_extensions: LitBool,
+    utf8_charset: LitBool,
 }
 
 struct AssetFile(LitStr);
@@ -80,6 +82,7 @@ impl Parse for EmbedAsset {
         let mut maybe_should_compress = None;
         let mut maybe_is_cache_busted = None;
         let mut maybe_allow_unknown_extensions = None;
+        let mut maybe_utf8_charset = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -99,11 +102,15 @@ impl Parse for EmbedAsset {
                     let value = input.parse()?;
                     maybe_allow_unknown_extensions = Some(value);
                 }
+                "utf8_charset" => {
+                    let value = input.parse()?;
+                    maybe_utf8_charset = Some(value);
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, or `allow_unknown_extensions` but got {key}"
+                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, `allow_unknown_extensions`, or `utf8_charset` but got {key}"
                         ),
                     ));
                 }
@@ -125,12 +132,17 @@ impl Parse for EmbedAsset {
             value: false,
             span: Span::call_site(),
         });
+        let utf8_charset = maybe_utf8_charset.unwrap_or(LitBool {
+            value: true,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             asset_file,
             should_compress,
             cache_busted,
             allow_unknown_extensions,
+            utf8_charset,
         })
     }
 }
@@ -177,12 +189,14 @@ impl ToTokens for EmbedAsset {
         let ShouldCompress(should_compress) = &self.should_compress;
         let IsCacheBusted(cache_busted) = &self.cache_busted;
         let allow_unknown_extensions = &self.allow_unknown_extensions;
+        let utf8_charset = self.utf8_charset.value;
 
         let result = generate_static_handler(
             asset_file,
             should_compress,
             cache_busted,
             allow_unknown_extensions,
+            utf8_charset,
         );
 
         match result {
@@ -206,6 +220,7 @@ struct EmbedAssets {
     should_strip_html_ext: ShouldStripHtmlExt,
     cache_busted_paths: CacheBustedPaths,
     allow_unknown_extensions: LitBool,
+    utf8_charset: LitBool,
 }
 
 impl Parse for EmbedAssets {
@@ -218,6 +233,7 @@ impl Parse for EmbedAssets {
         let mut maybe_should_strip_html_ext = None;
         let mut maybe_cache_busted_paths = None;
         let mut maybe_allow_unknown_extensions = None;
+        let mut maybe_utf8_charset = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -245,10 +261,14 @@ impl Parse for EmbedAssets {
                     let value = input.parse()?;
                     maybe_allow_unknown_extensions = Some(value);
                 }
+                "utf8_charset" => {
+                    let value = input.parse()?;
+                    maybe_utf8_charset = Some(value);
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, or `allow_unknown_extensions`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, `allow_unknown_extensions`, or `utf8_charset`",
                     ));
                 }
             }
@@ -280,6 +300,10 @@ impl Parse for EmbedAssets {
             value: false,
             span: Span::call_site(),
         });
+        let utf8_charset = maybe_utf8_charset.unwrap_or(LitBool {
+            value: true,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             assets_dir,
@@ -288,6 +312,7 @@ impl Parse for EmbedAssets {
             should_strip_html_ext,
             cache_busted_paths,
             allow_unknown_extensions,
+            utf8_charset,
         })
     }
 }
@@ -300,6 +325,7 @@ impl ToTokens for EmbedAssets {
         let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
         let cache_busted_paths = &self.cache_busted_paths;
         let allow_unknown_extensions = &self.allow_unknown_extensions;
+        let utf8_charset = self.utf8_charset.value;
 
         let result = generate_static_routes(
             assets_dir,
@@ -308,6 +334,7 @@ impl ToTokens for EmbedAssets {
             should_strip_html_ext,
             cache_busted_paths,
             allow_unknown_extensions.value,
+            utf8_charset,
         );
 
         match result {
@@ -494,6 +521,7 @@ fn generate_static_routes(
     should_strip_html_ext: &LitBool,
     cache_busted_paths: &CacheBustedPaths,
     allow_unknown_extensions: bool,
+    utf8_charset: bool,
 ) -> Result<TokenStream, error::Error> {
     let assets_dir_abs = resolve_path(&assets_dir.value())
         .canonicalize()
@@ -538,6 +566,7 @@ fn generate_static_routes(
             should_strip_html_ext,
             is_entry_cache_busted,
             allow_unknown_extensions,
+            utf8_charset,
         )?;
 
         let mut web_path = None;
@@ -668,6 +697,7 @@ fn generate_static_handler(
     should_compress: &LitBool,
     cache_busted: &LitBool,
     allow_unknown_extensions: &LitBool,
+    utf8_charset: bool,
 ) -> Result<TokenStream, error::Error> {
     let asset_file_abs = resolve_path(&asset_file.value())
         .canonicalize()
@@ -697,6 +727,7 @@ fn generate_static_handler(
         },
         cache_busted.value(),
         allow_unknown_extensions.value(),
+        utf8_charset,
     )?;
 
     let route = quote! {
@@ -758,6 +789,7 @@ impl EmbeddedFileInfo {
         should_strip_html_ext: &LitBool,
         cache_busted: bool,
         allow_unknown_extensions: bool,
+        utf8_charset: bool,
     ) -> Result<Self, Error> {
         let contents = fs::read(pathbuf).map_err(|error| Error::CannotReadEntryContents {
             entry: pathbuf.clone(),
@@ -781,7 +813,7 @@ impl EmbeddedFileInfo {
                 .strip_prefix(dir)
                 .map_err(|_| Error::CannotMakeFileRelative(pathbuf.clone()))?;
             let mut web_path = normalize_web_path(relative_entry);
-            if should_strip_html_ext.value && content_type == "text/html" {
+            if should_strip_html_ext.value && content_type == mime::TEXT_HTML {
                 strip_html_ext(&mut web_path);
             }
 
@@ -789,6 +821,14 @@ impl EmbeddedFileInfo {
         } else {
             None
         };
+
+        let content_type =
+            if utf8_charset && takes_charset(&content_type) && str::from_utf8(&contents).is_ok() {
+                with_utf8_charset(&content_type)
+            } else {
+                content_type
+            };
+        let content_type = content_type.to_string();
 
         let etag_str = etag(&contents);
         let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
@@ -870,6 +910,29 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<(LitByteSt
     })
 }
 
+/// Check if a media type benefits from a `charset` parameter
+///
+/// Without one browsers guess the encoding of most text, and `text/markdown`
+/// requires it. These don't need it: `text/javascript` and `text/calendar`
+/// default to UTF-8, `text/vtt` is always UTF-8 and has no such parameter, and
+/// XML declares its own encoding, which being valid UTF-8 can't rule out.
+fn takes_charset(media_type: &Mime) -> bool {
+    let subtype = media_type.subtype();
+    media_type.type_() == mime::TEXT
+        && media_type.get_param(mime::CHARSET).is_none()
+        && subtype != mime::JAVASCRIPT
+        && subtype != "calendar"
+        && subtype != "vtt"
+        && subtype != mime::XML
+}
+
+/// Add `charset=utf-8` to a media type, keeping its other parameters
+fn with_utf8_charset(media_type: &Mime) -> Mime {
+    format!("{media_type}; {}={}", mime::CHARSET, mime::UTF_8)
+        .parse()
+        .expect("adding a parameter to a valid media type should keep it valid")
+}
+
 /// Use `mime_guess` to get the best guess of the file's MIME type
 /// by looking at its extension, or return an error if unable.
 ///
@@ -878,10 +941,10 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<(LitByteSt
 ///
 /// We accept the first guess because [`mime_guess` updates the order
 /// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
-fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<String, error::Error> {
+fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime, error::Error> {
     let Some(ext) = path.extension() else {
         return if allow_unknown_extensions {
-            Ok(mime_guess::mime::APPLICATION_OCTET_STREAM.to_string())
+            Ok(mime::APPLICATION_OCTET_STREAM)
         } else {
             Err(error::Error::UnknownFileExtension(None))
         };
@@ -894,12 +957,11 @@ fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Stri
     let guess = mime_guess::MimeGuess::from_ext(ext);
 
     if allow_unknown_extensions {
-        return Ok(guess.first_or_octet_stream().to_string());
+        return Ok(guess.first_or_octet_stream());
     }
 
     guess
-        .first_raw()
-        .map(ToOwned::to_owned)
+        .first()
         .ok_or(error::Error::UnknownFileExtension(Some(ext.into())))
 }
 
