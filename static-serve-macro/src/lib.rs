@@ -526,8 +526,7 @@ fn generate_static_routes(
         let EmbeddedFileInfo {
             entry_path,
             content_type,
-            etag_str,
-            lit_byte_str_contents,
+            body,
             maybe_gzip,
             maybe_zstd,
             cache_busted,
@@ -554,24 +553,16 @@ fn generate_static_routes(
         }
 
         routes.push(quote! {
-                    router = ::static_serve::static_route(
-                        router,
-                        &[#(#web_paths),*],
-                        #content_type,
-                        ::static_serve::EmbeddedBody {
-         bytes: {
-                            // Poor man's `tracked_path`
-                            // https://github.com/rust-lang/rust/issues/99515
-                            const _: &[u8] = include_bytes!(#entry_str);
-                                #lit_byte_str_contents
-                        },
-         etag: #etag_str,
-        },
-                        #maybe_gzip,
-                        #maybe_zstd,
-                        #cache_busted
-                    );
-                });
+            router = ::static_serve::static_route(
+                router,
+                &[#(#web_paths),*],
+                #content_type,
+                #body,
+                #maybe_gzip,
+                #maybe_zstd,
+                #cache_busted
+            );
+        });
     }
 
     Ok(quote! {
@@ -679,15 +670,10 @@ fn generate_static_handler(
             entry: resolve_path(&asset_file.value()),
             error,
         })?;
-    let asset_file_abs_str = asset_file_abs
-        .to_str()
-        .ok_or_else(|| Error::FilePathIsNotUtf8(asset_file_abs.clone()))?;
-
     let EmbeddedFileInfo {
         entry_path: _,
         content_type,
-        etag_str,
-        lit_byte_str_contents,
+        body,
         maybe_gzip,
         maybe_zstd,
         cache_busted,
@@ -704,22 +690,14 @@ fn generate_static_handler(
     )?;
 
     let route = quote! {
-            ::static_serve::static_method_router(
-                #content_type,
-                ::static_serve::EmbeddedBody {
-     bytes: {
-                    // Poor man's `tracked_path`
-                    // https://github.com/rust-lang/rust/issues/99515
-                    const _: &[u8] = include_bytes!(#asset_file_abs_str);
-                    #lit_byte_str_contents
-                },
-     etag: #etag_str,
-    },
-                #maybe_gzip,
-                #maybe_zstd,
-                #cache_busted
-            )
-        };
+        ::static_serve::static_method_router(
+            #content_type,
+            #body,
+            #maybe_gzip,
+            #maybe_zstd,
+            #cache_busted
+        )
+    };
 
     Ok(route)
 }
@@ -747,8 +725,7 @@ struct EmbeddedFileInfo {
     /// the router is responsible for the file's path on the server.
     entry_path: Option<String>,
     content_type: String,
-    etag_str: String,
-    lit_byte_str_contents: LitByteStr,
+    body: TokenStream,
     maybe_gzip: OptionCompressedBody,
     maybe_zstd: OptionCompressedBody,
     cache_busted: bool,
@@ -767,6 +744,15 @@ impl EmbeddedFileInfo {
             entry: pathbuf.clone(),
             error,
         })?;
+        // Checked first since compressing is by far the slowest step
+        let content_type = file_content_type(pathbuf, allow_unknown_extensions)?;
+
+        let path_str = pathbuf
+            .to_str()
+            .ok_or_else(|| Error::FilePathIsNotUtf8(pathbuf.clone()))?;
+        // `include_bytes!` also tracks the file, and is much cheaper than
+        // passing the bytes through the token stream
+        let body = quote! { ::core::include_bytes!(#path_str) };
 
         // Optionally compress files
         let (maybe_gzip, maybe_zstd) = if should_compress.value {
@@ -776,8 +762,6 @@ impl EmbeddedFileInfo {
         } else {
             (None, None)
         };
-
-        let content_type = file_content_type(pathbuf, allow_unknown_extensions)?;
 
         // entry_path is only needed for the router (embed_assets!)
         let entry_path = if let Some(dir) = assets_dir_abs {
@@ -802,15 +786,19 @@ impl EmbeddedFileInfo {
         let content_type = content_type.to_string();
 
         let etag_str = etag(&contents);
-        let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
+        let body = quote! {
+            ::static_serve::EmbeddedBody {
+                bytes: #body,
+                etag: #etag_str,
+            }
+        };
         let maybe_gzip = OptionCompressedBody(maybe_gzip);
         let maybe_zstd = OptionCompressedBody(maybe_zstd);
 
         Ok(Self {
             entry_path,
             content_type,
-            etag_str,
-            lit_byte_str_contents,
+            body,
             maybe_gzip,
             maybe_zstd,
             cache_busted,
