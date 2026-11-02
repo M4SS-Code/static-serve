@@ -268,14 +268,12 @@ fn static_inner(
         (VARY, HeaderValue::from_static("Accept-Encoding")),
     ];
 
-    // Cache-Control stays off 412: without it the error can't be stored,
-    // while with it a cache could answer later requests with it, although
-    // the conditional headers aren't part of the cache key.
+    // Cache-Control stays off 412 and 416: without it the errors can't be
+    // stored, while with it a cache could answer later requests with them,
+    // although the conditional and Range headers aren't part of the cache key.
     if !if_match.passes(selected.etag) {
         return (validators, StatusCode::PRECONDITION_FAILED).into_response();
     }
-
-    let resp_base = (validators, optional_cache_control);
 
     if if_none_match.matches(selected.etag) {
         // RFC 9110 section 8.6 only lets a 304 carry the Content-Length the
@@ -290,7 +288,7 @@ fn static_inner(
         return (
             StatusCode::NOT_MODIFIED,
             [(CONTENT_LENGTH, content_length)],
-            resp_base,
+            (validators, optional_cache_control),
             (),
         )
             .into_response();
@@ -310,14 +308,18 @@ fn static_inner(
     };
     let accept_ranges = is_identity.then_some([(ACCEPT_RANGES, HeaderValue::from_static("bytes"))]);
 
-    let resp_base = (
-        [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
-        accept_ranges,
-        resp_base,
-    );
-
     match serve_file_with_http_range(selected_body, http_range) {
-        Ok(body_range) => (resp_base, optional_content_encoding, body_range).into_response(),
-        Err(unsatisfiable) => (resp_base, unsatisfiable).into_response(),
+        Ok(body_range) => (
+            (
+                validators,
+                optional_cache_control,
+                accept_ranges,
+                [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
+                optional_content_encoding,
+            ),
+            body_range,
+        )
+            .into_response(),
+        Err(unsatisfiable) => (validators, accept_ranges, unsatisfiable).into_response(),
     }
 }

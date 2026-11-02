@@ -1634,22 +1634,27 @@ async fn if_match_requires_a_strong_match() {
 }
 
 #[tokio::test]
-async fn precondition_failed_is_not_cacheable() {
+async fn error_responses_are_not_cacheable_and_have_no_content_type() {
     embed_assets!(
         "../static-serve/test_fixtures/assets/big",
         cache_busted_paths = ["immutable"]
     );
     let router: Router<()> = static_router();
 
-    let request = Request::builder()
-        .uri("/immutable/app.js")
-        .header(IF_MATCH, "\"stale\"")
-        .body(Body::empty())
-        .unwrap();
-    let response = get_response(router, request).await;
-    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
-    assert!(!response.headers().contains_key("cache-control"));
-    assert!(!response.headers().contains_key("content-type"));
+    for (header, value, status) in [
+        (IF_MATCH, "\"stale\"", StatusCode::PRECONDITION_FAILED),
+        (RANGE, "bytes=999999-", StatusCode::RANGE_NOT_SATISFIABLE),
+    ] {
+        let request = Request::builder()
+            .uri("/immutable/app.js")
+            .header(header, value)
+            .body(Body::empty())
+            .unwrap();
+        let response = get_response(router.clone(), request).await;
+        assert_eq!(response.status(), status);
+        assert!(!response.headers().contains_key("cache-control"));
+        assert!(!response.headers().contains_key("content-type"));
+    }
 }
 
 #[tokio::test]
