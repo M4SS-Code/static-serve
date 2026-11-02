@@ -3,7 +3,6 @@
 
 use std::{
     collections::HashMap,
-    convert::Into,
     env, fs,
     io::{self, Write},
     path::{Component, Path, PathBuf},
@@ -529,13 +528,11 @@ fn generate_static_routes(
             body,
             maybe_gzip,
             maybe_zstd,
-            cache_busted,
         } = EmbeddedFileInfo::from_path(
             &entry,
             Some(&assets_dir_abs),
             should_compress,
             should_strip_html_ext,
-            is_entry_cache_busted,
             allow_unknown_extensions,
         )?;
 
@@ -560,7 +557,7 @@ fn generate_static_routes(
                 #body,
                 #maybe_gzip,
                 #maybe_zstd,
-                #cache_busted
+                #is_entry_cache_busted
             );
         });
     }
@@ -676,7 +673,6 @@ fn generate_static_handler(
         body,
         maybe_gzip,
         maybe_zstd,
-        cache_busted,
     } = EmbeddedFileInfo::from_path(
         &asset_file_abs,
         None,
@@ -685,7 +681,6 @@ fn generate_static_handler(
             value: false,
             span: Span::call_site(),
         },
-        cache_busted.value(),
         allow_unknown_extensions.value(),
     )?;
 
@@ -728,20 +723,18 @@ struct EmbeddedFileInfo {
     body: TokenStream,
     maybe_gzip: OptionCompressedBody,
     maybe_zstd: OptionCompressedBody,
-    cache_busted: bool,
 }
 
 impl EmbeddedFileInfo {
     fn from_path(
-        pathbuf: &PathBuf,
+        pathbuf: &Path,
         assets_dir_abs: Option<&Path>,
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
-        cache_busted: bool,
         allow_unknown_extensions: bool,
     ) -> Result<Self, Error> {
         let contents = fs::read(pathbuf).map_err(|error| Error::CannotReadEntryContents {
-            entry: pathbuf.clone(),
+            entry: pathbuf.to_path_buf(),
             error,
         })?;
         // Checked first since compressing is by far the slowest step
@@ -749,7 +742,7 @@ impl EmbeddedFileInfo {
 
         let path_str = pathbuf
             .to_str()
-            .ok_or_else(|| Error::FilePathIsNotUtf8(pathbuf.clone()))?;
+            .ok_or_else(|| Error::FilePathIsNotUtf8(pathbuf.to_path_buf()))?;
         // `include_bytes!` also tracks the file, and is much cheaper than
         // passing the bytes through the token stream
         let body = quote! { ::core::include_bytes!(#path_str) };
@@ -767,7 +760,7 @@ impl EmbeddedFileInfo {
         let entry_path = if let Some(dir) = assets_dir_abs {
             let relative_entry = pathbuf
                 .strip_prefix(dir)
-                .map_err(|_| Error::CannotMakeFileRelative(pathbuf.clone()))?;
+                .map_err(|_| Error::CannotMakeFileRelative(pathbuf.to_path_buf()))?;
             let mut web_path = normalize_web_path(relative_entry);
             if should_strip_html_ext.value && content_type == mime::TEXT_HTML {
                 strip_html_ext(&mut web_path);
@@ -801,7 +794,6 @@ impl EmbeddedFileInfo {
             body,
             maybe_gzip,
             maybe_zstd,
-            cache_busted,
         })
     }
 }
@@ -836,6 +828,9 @@ fn zstd_compress(contents: &[u8], entry: &Path) -> Result<Option<(LitByteStr, St
     Ok(maybe_get_compressed(&compressed, contents))
 }
 
+/// RFC 9659 limits the zstd content coding to a window of 8 MiB
+const MAX_ZSTD_WINDOW_LOG: u32 = 23;
+
 fn write_to_zstd_encoder(
     encoder: &mut zstd::Encoder<'static, Vec<u8>>,
     contents: &[u8],
@@ -846,7 +841,7 @@ fn write_to_zstd_encoder(
             .try_into()
             .expect("contents size should fit into u64"),
     ))?;
-    encoder.window_log(23)?;
+    encoder.window_log(MAX_ZSTD_WINDOW_LOG)?;
     encoder.include_checksum(false)?;
     encoder.include_contentsize(false)?;
     encoder.long_distance_matching(false)?;
@@ -899,7 +894,7 @@ fn with_utf8_charset(media_type: &Mime) -> Mime {
 /// will not produce an error, but application/octet-stream.
 ///
 /// We accept the first guess because [`mime_guess` updates the order
-/// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
+/// according to the latest IETF RFC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
 fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime, error::Error> {
     let Some(ext) = path.extension() else {
         return if allow_unknown_extensions {
@@ -1003,8 +998,6 @@ fn strip_html_ext(path: &mut String) {
 
     if path.ends_with("/index") {
         path.truncate(path.len() - "index".len());
-    } else if path == "/index" {
-        path.truncate(1);
     }
 }
 
