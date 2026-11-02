@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     convert::Into,
-    fs,
+    env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
 };
@@ -36,6 +36,18 @@ pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAsset);
     quote! { #parsed }.into()
+}
+
+/// Resolve a path given to a macro against the directory of `Cargo.toml`
+///
+/// The working directory of rustc is the workspace root for workspace members
+/// and the package root otherwise, so it would give the same path different
+/// meanings. It's only used if the crate isn't being built by Cargo.
+fn resolve_path(path: &str) -> PathBuf {
+    env::var_os("CARGO_MANIFEST_DIR").map_or_else(
+        || PathBuf::from(path),
+        |manifest_dir| Path::new(&manifest_dir).join(path),
+    )
 }
 
 struct EmbedAsset {
@@ -115,13 +127,16 @@ impl Parse for AssetFile {
         let input_span = input.span();
         let asset_file: LitStr = input.parse()?;
         let literal = asset_file.value();
-        let path = Path::new(&literal);
-        let metadata = match fs::metadata(path) {
+        let path = resolve_path(&literal);
+        let metadata = match fs::metadata(&path) {
             Ok(meta) => meta,
             Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
                 return Err(syn::Error::new(
                     input_span,
-                    format!("The specified asset file ({literal}) does not exist."),
+                    format!(
+                        "The specified asset file ({}) does not exist. Relative paths start at the directory of Cargo.toml.",
+                        path.display()
+                    ),
                 ));
             }
             Err(e) => {
@@ -303,13 +318,16 @@ impl Parse for AssetsDir {
         let input_span = input.span();
         let assets_dir: LitStr = input.parse()?;
         let literal = assets_dir.value();
-        let path = Path::new(&literal);
-        let metadata = match fs::metadata(path) {
+        let path = resolve_path(&literal);
+        let metadata = match fs::metadata(&path) {
             Ok(meta) => meta,
             Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
                 return Err(syn::Error::new(
                     input_span,
-                    "The specified assets directory does not exist",
+                    format!(
+                        "The specified assets directory ({}) does not exist. Relative paths start at the directory of Cargo.toml.",
+                        path.display()
+                    ),
                 ));
             }
             Err(e) => {
@@ -352,7 +370,7 @@ fn validate_ignore_paths(
 ) -> syn::Result<IgnorePaths> {
     let mut valid_ignore_paths = Vec::new();
     for (dir, span) in ignore_paths.0 {
-        let full_path = PathBuf::from(assets_dir.value()).join(&dir);
+        let full_path = resolve_path(&assets_dir.value()).join(&dir);
         match fs::metadata(&full_path) {
             Ok(_) => valid_ignore_paths.push(full_path),
             Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
@@ -423,7 +441,7 @@ fn validate_cache_busted_paths(
     let mut valid_dirs = Vec::new();
     let mut valid_files = Vec::new();
     for (dir, span) in tuples.0 {
-        let full_path = PathBuf::from(assets_dir.value()).join(&dir);
+        let full_path = resolve_path(&assets_dir.value()).join(&dir);
         match fs::metadata(&full_path) {
             Ok(meta) => {
                 if meta.is_dir() {
@@ -485,7 +503,7 @@ fn generate_static_routes(
     cache_busted_paths: &CacheBustedPaths,
     allow_unknown_extensions: bool,
 ) -> Result<TokenStream, error::Error> {
-    let assets_dir_abs = Path::new(&assets_dir.value())
+    let assets_dir_abs = resolve_path(&assets_dir.value())
         .canonicalize()
         .map_err(|error| Error::CannotCanonicalizeDirectory {
             dir: assets_dir.value(),
@@ -642,10 +660,10 @@ fn generate_static_handler(
     cache_busted: &LitBool,
     allow_unknown_extensions: &LitBool,
 ) -> Result<TokenStream, error::Error> {
-    let asset_file_abs = Path::new(&asset_file.value())
+    let asset_file_abs = resolve_path(&asset_file.value())
         .canonicalize()
         .map_err(|error| Error::CannotCanonicalizeFile {
-            entry: Path::new(&asset_file.value()).to_path_buf(),
+            entry: resolve_path(&asset_file.value()),
             error,
         })?;
     let asset_file_abs_str = asset_file_abs
