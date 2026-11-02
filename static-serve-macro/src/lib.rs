@@ -6,12 +6,11 @@ use std::{
     convert::Into,
     env, fs,
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use display_full_error::DisplayFullError;
 use flate2::write::GzEncoder;
-use glob::glob;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use sha2::{Digest as _, Sha256};
@@ -364,34 +363,45 @@ impl Parse for IgnorePathsWithSpan {
     }
 }
 
+/// Check that the entries of a path list exist, without following a final
+/// symlink so that a dangling link can be ignored
+fn validate_paths(
+    paths: Vec<(PathBuf, Span)>,
+    assets_dir: &LitStr,
+    not_found_message: &str,
+) -> syn::Result<Vec<PathBuf>> {
+    let assets_dir = resolve_path(&assets_dir.value());
+    paths
+        .into_iter()
+        .map(
+            |(path, span)| match fs::symlink_metadata(assets_dir.join(&path)) {
+                Ok(_) => Ok(path),
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
+                    Err(syn::Error::new(span, not_found_message))
+                }
+                Err(e) => Err(syn::Error::new(
+                    span,
+                    format!(
+                        "Error reading path {}: {}",
+                        path.to_string_lossy(),
+                        DisplayFullError(&e)
+                    ),
+                )),
+            },
+        )
+        .collect()
+}
+
 fn validate_ignore_paths(
     ignore_paths: IgnorePathsWithSpan,
     assets_dir: &LitStr,
 ) -> syn::Result<IgnorePaths> {
-    let mut valid_ignore_paths = Vec::new();
-    for (dir, span) in ignore_paths.0 {
-        let full_path = resolve_path(&assets_dir.value()).join(&dir);
-        match fs::metadata(&full_path) {
-            Ok(_) => valid_ignore_paths.push(full_path),
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
-                return Err(syn::Error::new(
-                    span,
-                    "The specified ignored path does not exist",
-                ));
-            }
-            Err(e) => {
-                return Err(syn::Error::new(
-                    span,
-                    format!(
-                        "Error reading ignored path {}: {}",
-                        dir.to_string_lossy(),
-                        DisplayFullError(&e)
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(IgnorePaths(valid_ignore_paths))
+    validate_paths(
+        ignore_paths.0,
+        assets_dir,
+        "The specified ignored path does not exist",
+    )
+    .map(IgnorePaths)
 }
 
 struct ShouldCompress(LitBool);
@@ -421,10 +431,7 @@ impl Parse for IsCacheBusted {
     }
 }
 
-struct CacheBustedPaths {
-    dirs: Vec<PathBuf>,
-    files: Vec<PathBuf>,
-}
+struct CacheBustedPaths(Vec<PathBuf>);
 struct CacheBustedPathsWithSpan(Vec<(PathBuf, Span)>);
 
 impl Parse for CacheBustedPathsWithSpan {
@@ -438,40 +445,12 @@ fn validate_cache_busted_paths(
     tuples: CacheBustedPathsWithSpan,
     assets_dir: &LitStr,
 ) -> syn::Result<CacheBustedPaths> {
-    let mut valid_dirs = Vec::new();
-    let mut valid_files = Vec::new();
-    for (dir, span) in tuples.0 {
-        let full_path = resolve_path(&assets_dir.value()).join(&dir);
-        match fs::metadata(&full_path) {
-            Ok(meta) => {
-                if meta.is_dir() {
-                    valid_dirs.push(full_path);
-                } else {
-                    valid_files.push(full_path);
-                }
-            }
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
-                return Err(syn::Error::new(
-                    span,
-                    "The specified directory for cache busting does not exist",
-                ));
-            }
-            Err(e) => {
-                return Err(syn::Error::new(
-                    span,
-                    format!(
-                        "Error reading path {}: {}",
-                        dir.to_string_lossy(),
-                        DisplayFullError(&e)
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(CacheBustedPaths {
-        dirs: valid_dirs,
-        files: valid_files,
-    })
+    validate_paths(
+        tuples.0,
+        assets_dir,
+        "The specified path for cache busting does not exist",
+    )
+    .map(CacheBustedPaths)
 }
 
 /// Helper function for turning an array of strs representing paths into
@@ -494,7 +473,6 @@ fn parse_dirs(input: ParseStream) -> syn::Result<Vec<(PathBuf, Span)>> {
     Ok(dirs)
 }
 
-#[expect(clippy::too_many_lines)]
 fn generate_static_routes(
     assets_dir: &LitStr,
     ignore_paths: &IgnorePaths,
@@ -509,75 +487,25 @@ fn generate_static_routes(
             dir: assets_dir.value(),
             error,
         })?;
-    let assets_dir_abs_str = assets_dir_abs
-        .to_str()
-        .ok_or_else(|| Error::InvalidUnicodeInDirectoryName(assets_dir_abs.clone()))?;
-    let canon_ignore_paths = ignore_paths
-        .0
-        .iter()
-        .map(|d| {
-            d.canonicalize()
-                .map_err(|error| Error::CannotCanonicalizeIgnorePath {
-                    path: d.clone(),
-                    error,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let canon_cache_busted_dirs = cache_busted_paths
-        .dirs
-        .iter()
-        .map(|d| {
-            d.canonicalize()
-                .map_err(|error| Error::CannotCanonicalizeCacheBustedDir {
-                    dir: d.clone(),
-                    error,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let canon_cache_busted_files = cache_busted_paths
-        .files
-        .iter()
-        .map(|file| {
-            file.canonicalize()
-                .map_err(|error| Error::CannotCanonicalizeFile {
-                    entry: file.clone(),
-                    error,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let option_paths = |paths: &[PathBuf]| {
+        paths
+            .iter()
+            .map(|path| path_inside_assets_dir(&assets_dir_abs, path))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let ignore_paths = option_paths(&ignore_paths.0)?;
+    let cache_busted_paths = option_paths(&cache_busted_paths.0)?;
+
+    let mut entries = Vec::new();
+    collect_files(&assets_dir_abs, &ignore_paths, &mut entries)?;
 
     let mut routes = Vec::new();
     let mut seen_web_paths = HashMap::new();
-    for entry in glob(&format!("{assets_dir_abs_str}/**/*")).map_err(Error::Pattern)? {
-        let entry = entry.map_err(Error::Glob)?;
-        let metadata = entry.metadata().map_err(|error| Error::CannotGetMetadata {
-            entry: entry.clone(),
-            error,
-        })?;
-        if metadata.is_dir() {
-            continue;
-        }
-
-        // Skip `entry`s which are located in ignored paths
-        if canon_ignore_paths
+    for entry in entries {
+        let is_entry_cache_busted = cache_busted_paths
             .iter()
-            .any(|ignore_path| entry.starts_with(ignore_path))
-        {
-            continue;
-        }
+            .any(|path| entry.starts_with(path));
 
-        let mut is_entry_cache_busted = false;
-        if canon_cache_busted_dirs
-            .iter()
-            .any(|dir| entry.starts_with(dir))
-            || canon_cache_busted_files.contains(&entry)
-        {
-            is_entry_cache_busted = true;
-        }
-
-        let entry = entry
-            .canonicalize()
-            .map_err(|error| Error::CannotCanonicalizeFile { entry, error })?;
         let entry_str = entry
             .to_str()
             .ok_or_else(|| Error::FilePathIsNotUtf8(entry.clone()))?;
@@ -591,7 +519,7 @@ fn generate_static_routes(
             cache_busted,
         } = EmbeddedFileInfo::from_path(
             &entry,
-            Some(assets_dir_abs_str),
+            Some(&assets_dir_abs),
             should_compress,
             should_strip_html_ext,
             is_entry_cache_busted,
@@ -631,6 +559,68 @@ fn generate_static_routes(
             router
         }
     })
+}
+
+/// Turn an entry of a path list into an absolute path below the assets directory
+///
+/// `.` and `..` are resolved lexically because entries are compared to the
+/// paths of the directory walk, which keep the names of symlinks.
+fn path_inside_assets_dir(assets_dir_abs: &Path, path: &Path) -> Result<PathBuf, Error> {
+    let mut normalized = PathBuf::new();
+    for component in assets_dir_abs.join(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component),
+        }
+    }
+
+    if normalized.starts_with(assets_dir_abs) {
+        Ok(normalized)
+    } else {
+        Err(Error::PathOutsideAssetsDir(path.to_path_buf()))
+    }
+}
+
+/// Recursively collect the files of `dir` in a deterministic order, following
+/// symlinks and skipping `ignore_paths` without looking inside of them
+fn collect_files(
+    dir: &Path,
+    ignore_paths: &[PathBuf],
+    files: &mut Vec<PathBuf>,
+) -> Result<(), Error> {
+    let read_dir_error = |error| Error::CannotReadDirectory {
+        dir: dir.to_path_buf(),
+        error,
+    };
+    let mut entries = fs::read_dir(dir)
+        .map_err(read_dir_error)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<io::Result<Vec<_>>>()
+        .map_err(read_dir_error)?;
+    entries.sort();
+
+    for entry in entries {
+        if ignore_paths.iter().any(|path| entry.starts_with(path)) {
+            continue;
+        }
+
+        let metadata = fs::metadata(&entry).map_err(|error| Error::CannotGetMetadata {
+            entry: entry.clone(),
+            error,
+        })?;
+        if metadata.is_dir() {
+            collect_files(&entry, ignore_paths, files)?;
+        } else if metadata.is_file() {
+            files.push(entry);
+        } else {
+            return Err(Error::NotARegularFile(entry));
+        }
+    }
+
+    Ok(())
 }
 
 /// Record the web path claimed by `entry_str`, erroring if another file
@@ -744,7 +734,7 @@ struct EmbeddedFileInfo {
 impl EmbeddedFileInfo {
     fn from_path(
         pathbuf: &PathBuf,
-        assets_dir_abs_str: Option<&str>,
+        assets_dir_abs: Option<&Path>,
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
         cache_busted: bool,
@@ -767,10 +757,11 @@ impl EmbeddedFileInfo {
         let content_type = file_content_type(pathbuf, allow_unknown_extensions)?;
 
         // entry_path is only needed for the router (embed_assets!)
-        let entry_path = if let Some(dir) = assets_dir_abs_str {
-            let relative_entry = pathdiff::diff_paths(pathbuf, dir)
-                .ok_or_else(|| Error::CannotMakeFileRelative(pathbuf.clone()))?;
-            let mut web_path = normalize_web_path(&relative_entry);
+        let entry_path = if let Some(dir) = assets_dir_abs {
+            let relative_entry = pathbuf
+                .strip_prefix(dir)
+                .map_err(|_| Error::CannotMakeFileRelative(pathbuf.clone()))?;
+            let mut web_path = normalize_web_path(relative_entry);
             if should_strip_html_ext.value && content_type == "text/html" {
                 strip_html_ext(&mut web_path);
             }
@@ -911,7 +902,7 @@ fn normalize_web_path(relative_path: &Path) -> String {
     let normalized = relative_path
         .components()
         .filter_map(|component| match component {
-            std::path::Component::Normal(segment) => segment.to_str(),
+            Component::Normal(segment) => segment.to_str(),
             _ => None,
         })
         .collect::<Vec<_>>()
