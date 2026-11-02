@@ -205,8 +205,8 @@ impl ToTokens for EmbedAsset {
                     #value
                 });
             }
-            Err(err_message) => {
-                let error = syn::Error::new(Span::call_site(), err_message);
+            Err(err) => {
+                let error = syn::Error::new(Span::call_site(), DisplayFullError(&err));
                 tokens.extend(error.to_compile_error());
             }
         }
@@ -343,8 +343,8 @@ impl ToTokens for EmbedAssets {
                     #value
                 });
             }
-            Err(err_message) => {
-                let error = syn::Error::new(Span::call_site(), err_message);
+            Err(err) => {
+                let error = syn::Error::new(Span::call_site(), DisplayFullError(&err));
                 tokens.extend(error.to_compile_error());
             }
         }
@@ -946,15 +946,14 @@ fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime
         return if allow_unknown_extensions {
             Ok(mime::APPLICATION_OCTET_STREAM)
         } else {
-            Err(error::Error::UnknownFileExtension(None))
+            Err(Error::MissingFileExtension(path.to_path_buf()))
         };
     };
 
-    let ext = ext
-        .to_str()
-        .ok_or(error::Error::InvalidFileExtension(path.into()))?;
-
-    let guess = mime_guess::MimeGuess::from_ext(ext);
+    let guess = ext.to_str().map_or(
+        mime_guess::MimeGuess::from_ext(""),
+        mime_guess::MimeGuess::from_ext,
+    );
 
     if allow_unknown_extensions {
         return Ok(guess.first_or_octet_stream());
@@ -962,7 +961,7 @@ fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime
 
     guess
         .first()
-        .ok_or(error::Error::UnknownFileExtension(Some(ext.into())))
+        .ok_or_else(|| Error::UnknownFileExtension(path.to_path_buf()))
 }
 
 fn etag(contents: &[u8]) -> String {
@@ -1050,7 +1049,10 @@ fn strip_html_ext(path: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use proc_macro2::{TokenStream, TokenTree};
     use quote::{ToTokens, quote};
@@ -1112,6 +1114,16 @@ mod tests {
         );
     }
 
+    /// The canonical path of a file in a fixture directory, as errors print it
+    fn fixture_path(dir: &str, file: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../test_fixtures")
+            .join(dir)
+            .canonicalize()
+            .unwrap()
+            .join(file)
+    }
+
     #[test]
     fn unknown_extensions_fail_the_build() {
         if !has_fixtures() {
@@ -1120,13 +1132,25 @@ mod tests {
 
         // The fixture holds `example.wtf` and the extensionless `.DS_STORE`
         let error = embed_assets_error(quote!("../test_fixtures/unknown_extensions")).unwrap();
-        assert!(error.starts_with("Missing file extension"), "{error}");
+        assert_eq!(
+            error,
+            format!(
+                "Missing file extension of {}",
+                fixture_path("unknown_extensions", ".DS_STORE").display()
+            )
+        );
         let error = embed_assets_error(quote!(
             "../test_fixtures/unknown_extensions",
             ignore_paths = [".DS_STORE"]
         ))
         .unwrap();
-        assert!(error.starts_with("Unknown file extension"), "{error}");
+        assert_eq!(
+            error,
+            format!(
+                "Unknown file extension of {}",
+                fixture_path("unknown_extensions", "example.wtf").display()
+            )
+        );
         assert_eq!(
             embed_assets_error(quote!(
                 "../test_fixtures/unknown_extensions",
@@ -1134,6 +1158,19 @@ mod tests {
             )),
             None
         );
+    }
+
+    #[test]
+    fn errors_keep_their_cause() {
+        if !has_fixtures() {
+            return;
+        }
+
+        let dangling = fixture_path("dangling", "dangling.txt");
+        let cause = fs::metadata(&dangling).unwrap_err();
+        let error = embed_assets_error(quote!("../test_fixtures/dangling")).unwrap();
+        assert!(error.contains(&dangling.display().to_string()), "{error}");
+        assert!(error.ends_with(&format!(": {cause}")), "{error}");
     }
 
     #[test]
