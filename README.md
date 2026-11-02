@@ -15,13 +15,12 @@ use axum::Router;
 use static_serve::{embed_asset, embed_assets};
 use tokio::net::TcpListener;
 
-// Generates `static_router()`, with one route per file in `public`
-embed_assets!("public", compress = true, cache_busted_paths = ["immutable"]);
-
 #[tokio::main]
 async fn main() {
     let robots = embed_asset!("other/robots.txt");
-    let router: Router = static_router().route("/robots.txt", robots);
+    // One route per file in `public`
+    let router: Router = embed_assets!("public", compress = true, cache_busted_paths = ["immutable"])
+        .route("/robots.txt", robots);
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, router).await.unwrap();

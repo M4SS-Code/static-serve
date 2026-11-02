@@ -70,8 +70,7 @@ fn decompress_gzip(compressed_body: &[u8]) -> Vec<u8> {
 
 #[tokio::test]
 async fn router_created_with_lit_str() {
-    embed_assets!("../test_fixtures/assets/small", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = false);
     assert!(router.has_routes());
     let request = create_request("/app.js", &Compression::None);
     let response = get_response(router, request).await;
@@ -90,8 +89,7 @@ async fn router_created_with_lit_str() {
 
 #[tokio::test]
 async fn router_created_uncompressed_because_not_worthwhile() {
-    embed_assets!("../test_fixtures/assets/small", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = true);
     assert!(router.has_routes());
 
     let request = create_request("/app.js", &Compression::Zstd);
@@ -112,8 +110,7 @@ async fn router_created_uncompressed_because_not_worthwhile() {
 
 #[tokio::test]
 async fn router_created_compressed_zstd_only() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
     assert!(router.has_routes());
 
     let request = create_request("/app.js", &Compression::Zstd);
@@ -146,8 +143,7 @@ async fn router_created_compressed_zstd_only() {
 
 #[tokio::test]
 async fn router_created_compressed_gzip_only() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
     assert!(router.has_routes());
 
     let request = create_request("/app.js", &Compression::Gzip);
@@ -180,8 +176,7 @@ async fn router_created_compressed_gzip_only() {
 
 #[tokio::test]
 async fn router_created_compressed_zstd_or_gzip_accepted() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
     assert!(router.has_routes());
 
     let request = create_request("/app.js", &Compression::Both);
@@ -212,8 +207,7 @@ async fn router_created_compressed_zstd_or_gzip_accepted() {
 
 #[tokio::test]
 async fn router_created_ignore_paths_one() {
-    embed_assets!("../test_fixtures/assets", ignore_paths = ["dist"]);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets", ignore_paths = ["dist"]);
     assert!(router.has_routes());
 
     let request = create_request("/small/app.js", &Compression::None);
@@ -234,11 +228,10 @@ async fn router_created_ignore_paths_one() {
 
 #[tokio::test]
 async fn router_created_ignore_paths_three() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets",
         ignore_paths = ["big", "small", "dist", "with_html"]
     );
-    let router: Router<()> = static_router();
     // all directories ignored, so router has no routes
     assert!(!router.has_routes());
 
@@ -254,8 +247,7 @@ async fn router_created_ignore_paths_three() {
 
 #[tokio::test]
 async fn handles_conditional_requests_same_etag() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
     assert!(router.has_routes());
 
     let request = create_request("/app.js", &Compression::Zstd);
@@ -301,8 +293,7 @@ async fn handles_conditional_requests_same_etag() {
 
 #[tokio::test]
 async fn handles_conditional_requests_different_etag() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
     assert!(router.has_routes());
 
     let request = Request::builder()
@@ -339,12 +330,11 @@ async fn handles_conditional_requests_different_etag() {
 
 #[tokio::test]
 async fn strips_html_correctly() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/with_html",
         compress = false,
         strip_html_ext = true
     );
-    let router: Router<()> = static_router();
     assert!(router.has_routes());
 
     // Test `index.html`
@@ -380,12 +370,11 @@ async fn strips_html_correctly() {
 
 #[tokio::test]
 async fn doesnt_strip_html_when_strip_html_false() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/with_html",
         compress = false,
         strip_html_ext = false
     );
-    let router: Router<()> = static_router();
     assert!(router.has_routes());
 
     // Requesting `/index` with no extension fails
@@ -412,8 +401,7 @@ async fn doesnt_strip_html_when_strip_html_false() {
 
 #[tokio::test]
 async fn doesnt_strip_html_when_not_specified() {
-    embed_assets!("../test_fixtures/assets/with_html", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/with_html", compress = false);
     assert!(router.has_routes());
 
     // Requesting `/index` with no extension fails
@@ -764,8 +752,7 @@ async fn handles_one_file_different_etag_no_cache_control() {
 
 #[tokio::test]
 async fn using_both_macros_together_works() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
     let handler = embed_asset!("../test_fixtures/assets/dist/ignore_me_plz.txt");
     let router = router.route("/ignore", handler);
 
@@ -883,12 +870,11 @@ async fn handles_one_file_with_cache_control_denied() {
 
 #[tokio::test]
 async fn using_both_macros_with_cache_busting_works() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/big",
         compress = true,
         cache_busted_paths = ["immutable"]
     );
-    let router: Router<()> = static_router();
     let handler = embed_asset!(
         "../test_fixtures/assets/dist/ignore_me_plz.txt",
         cache_bust = true
@@ -990,12 +976,11 @@ async fn using_both_macros_with_cache_busting_works() {
 
 #[tokio::test]
 async fn handles_dir_with_cache_control_on_single_file() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/small",
         compress = true,
         cache_busted_paths = ["styles.css"]
     );
-    let router = static_router();
     assert!(router.has_routes());
 
     // styles.css should be immutable / cache-busted
@@ -1045,12 +1030,11 @@ async fn handles_dir_with_cache_control_on_single_file() {
 
 #[tokio::test]
 async fn handles_dir_with_cache_control_on_filename_and_dir() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/small",
         compress = true,
         cache_busted_paths = [".", "styles.css"]
     );
-    let router = static_router();
     assert!(router.has_routes());
 
     // styles.css should be immutable / cache-busted
@@ -1108,8 +1092,8 @@ async fn handles_dir_with_cache_control_on_filename_and_dir() {
 
 #[tokio::test]
 async fn router_created_ignore_paths() {
-    embed_assets!("../test_fixtures/assets/small", ignore_paths = ["app.js"]);
-    let router: Router<()> = static_router();
+    let router: Router<()> =
+        embed_assets!("../test_fixtures/assets/small", ignore_paths = ["app.js"]);
 
     // app.js should be ignored, but styles.css should be available
     assert!(router.has_routes());
@@ -1129,11 +1113,10 @@ async fn router_created_ignore_paths() {
 
 #[tokio::test]
 async fn router_created_ignore_multiple_files() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/big",
         ignore_paths = ["app.js", "styles.css"]
     );
-    let router: Router<()> = static_router();
 
     // app.js and styles.css at root should be ignored, but files in /big/immutable should still be available
     assert!(router.has_routes());
@@ -1163,8 +1146,7 @@ async fn router_created_ignore_multiple_files() {
 
 #[tokio::test]
 async fn range_request_returns_206_with_partial_body() {
-    embed_assets!("../test_fixtures/assets/small", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = false);
 
     let request = Request::builder()
         .uri("/app.js")
@@ -1184,8 +1166,7 @@ async fn range_request_returns_206_with_partial_body() {
 
 #[tokio::test]
 async fn unsatisfiable_range_returns_416() {
-    embed_assets!("../test_fixtures/assets/small", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = false);
 
     let request = Request::builder()
         .uri("/app.js")
@@ -1201,8 +1182,7 @@ async fn unsatisfiable_range_returns_416() {
 
 #[tokio::test]
 async fn accept_ranges_present_on_200() {
-    embed_assets!("../test_fixtures/assets/small", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = false);
 
     let request = create_request("/app.js", &Compression::None);
     let response = get_response(router, request).await;
@@ -1213,8 +1193,7 @@ async fn accept_ranges_present_on_200() {
 
 #[tokio::test]
 async fn accept_ranges_absent_on_304() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     // First request to get the etag
     let request = create_request("/app.js", &Compression::None);
@@ -1239,8 +1218,7 @@ async fn accept_ranges_absent_on_304() {
 
 #[tokio::test]
 async fn range_is_ignored_when_a_compressed_body_is_selected() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let request = create_request("/app.js", &Compression::Zstd);
     let plain = get_response(router.clone(), request).await;
@@ -1274,8 +1252,7 @@ async fn range_is_ignored_when_a_compressed_body_is_selected() {
 
 #[tokio::test]
 async fn if_range_matching_etag_honors_range() {
-    embed_assets!("../test_fixtures/assets/small", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = false);
 
     // First get the etag
     let request = create_request("/app.js", &Compression::None);
@@ -1301,8 +1278,7 @@ async fn if_range_matching_etag_honors_range() {
 
 #[tokio::test]
 async fn if_range_mismatched_etag_returns_full_body() {
-    embed_assets!("../test_fixtures/assets/small", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = false);
 
     // Range + If-Range with non-matching etag -> 200 with full body
     let request = Request::builder()
@@ -1323,8 +1299,7 @@ async fn if_range_mismatched_etag_returns_full_body() {
 
 #[tokio::test]
 async fn if_range_mismatched_allows_compression() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     // Range + stale If-Range + Accept-Encoding -> 200 with compression
     let request = Request::builder()
@@ -1345,11 +1320,10 @@ async fn if_range_mismatched_allows_compression() {
 /// static-serve-macro.
 #[tokio::test]
 async fn serves_unknown_extensions() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/unknown_extensions",
         allow_unknown_extensions = true
     );
-    let router: Router<()> = static_router();
     assert!(router.has_routes());
 
     // Test `.DS_STORE`
@@ -1389,11 +1363,10 @@ async fn serves_unknown_extensions() {
 async fn allow_unknown_extensions_must_retain_content_type_for_known_extensions() {
     // Given a router embedding assets with `allow_unknown_extensions = true` and a file with known
     // extensions (in this case, `app.js`)
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/small",
         allow_unknown_extensions = true
     );
-    let router: Router<()> = static_router();
 
     // When requesting `.app.js` from the router
     let request = create_request("/app.js", &Compression::None);
@@ -1408,12 +1381,11 @@ async fn allow_unknown_extensions_must_retain_content_type_for_known_extensions(
 
 #[tokio::test]
 async fn not_modified_keeps_cache_headers_and_drops_content_type() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/big",
         compress = true,
         cache_busted_paths = ["app.js"]
     );
-    let router: Router<()> = static_router();
 
     let request = create_request("/app.js", &Compression::None);
     let response = get_response(router.clone(), request).await;
@@ -1435,8 +1407,7 @@ async fn not_modified_keeps_cache_headers_and_drops_content_type() {
 
 #[tokio::test]
 async fn if_none_match_handles_wildcard_weak_tags_and_lists() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let request = create_request("/app.js", &Compression::None);
     let response = get_response(router.clone(), request).await;
@@ -1473,8 +1444,7 @@ async fn if_none_match_handles_wildcard_weak_tags_and_lists() {
 
 #[tokio::test]
 async fn accept_encoding_honors_refusals_and_multiple_fields() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let cases: [(&[&str], Option<&str>); 19] = [
         (&["gzip;q=0"], None),
@@ -1518,8 +1488,7 @@ async fn accept_encoding_honors_refusals_and_multiple_fields() {
 
 #[tokio::test]
 async fn each_encoding_has_its_own_etag() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let mut etags = Vec::new();
     for compression in [Compression::None, Compression::Gzip, Compression::Zstd] {
@@ -1552,8 +1521,7 @@ async fn each_encoding_has_its_own_etag() {
 
 #[tokio::test]
 async fn if_range_with_compressed_etag_serves_the_full_body() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let request = create_request("/app.js", &Compression::Gzip);
     let response = get_response(router.clone(), request).await;
@@ -1578,8 +1546,7 @@ async fn if_range_with_compressed_etag_serves_the_full_body() {
 
 #[tokio::test]
 async fn if_match_requires_a_strong_match() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let request = create_request("/app.js", &Compression::None);
     let response = get_response(router.clone(), request).await;
@@ -1615,8 +1582,7 @@ async fn if_match_requires_a_strong_match() {
 
 #[tokio::test]
 async fn not_modified_describes_the_200_and_has_an_empty_body() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let request = create_request("/app.js", &Compression::Gzip);
     let response = get_response(router.clone(), request).await;
@@ -1645,11 +1611,10 @@ async fn not_modified_describes_the_200_and_has_an_empty_body() {
 
 #[tokio::test]
 async fn error_responses_are_not_cacheable_and_have_no_content_type() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/assets/big",
         cache_busted_paths = ["immutable"]
     );
-    let router: Router<()> = static_router();
 
     for (header, value, status) in [
         (IF_MATCH, "\"stale\"", StatusCode::PRECONDITION_FAILED),
@@ -1669,8 +1634,7 @@ async fn error_responses_are_not_cacheable_and_have_no_content_type() {
 
 #[tokio::test]
 async fn entity_tag_containing_a_star_is_not_a_wildcard() {
-    embed_assets!("../test_fixtures/assets/big", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = false);
 
     for (header, status) in [
         (IF_NONE_MATCH, StatusCode::OK),
@@ -1688,8 +1652,7 @@ async fn entity_tag_containing_a_star_is_not_a_wildcard() {
 
 #[tokio::test]
 async fn if_range_that_cant_match_ignores_the_range() {
-    embed_assets!("../test_fixtures/assets/big", compress = false);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = false);
 
     let response = get_response(
         router.clone(),
@@ -1715,23 +1678,20 @@ async fn if_range_that_cant_match_ignores_the_range() {
 #[tokio::test]
 async fn vary_is_only_sent_when_a_compressed_body_exists() {
     {
-        embed_assets!("../test_fixtures/assets/small", compress = true);
-        let router: Router<()> = static_router();
+        let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = true);
         let request = create_request("/app.js", &Compression::Gzip);
         let response = get_response(router, request).await;
         assert!(!response.headers().contains_key("vary"));
     }
 
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
     let response = get_response(router, create_request("/app.js", &Compression::None)).await;
     assert_eq!(response.headers().get("vary").unwrap(), "Accept-Encoding");
 }
 
 #[tokio::test]
 async fn symlinks_are_served_at_their_own_path() {
-    embed_assets!("../test_fixtures/symlinks");
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/symlinks");
 
     for route in ["/real/a.txt", "/alias.txt", "/linked_dir/a.txt"] {
         let response =
@@ -1742,11 +1702,10 @@ async fn symlinks_are_served_at_their_own_path() {
 
 #[tokio::test]
 async fn ignoring_a_symlink_only_ignores_the_link() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/symlinks",
         ignore_paths = ["alias.txt", "linked_dir"]
     );
-    let router: Router<()> = static_router();
 
     for (route, status) in [
         ("/real/a.txt", StatusCode::OK),
@@ -1761,11 +1720,10 @@ async fn ignoring_a_symlink_only_ignores_the_link() {
 
 #[tokio::test]
 async fn cache_busted_paths_match_symlinks_by_name() {
-    embed_assets!(
+    let router: Router<()> = embed_assets!(
         "../test_fixtures/symlinks",
         cache_busted_paths = ["linked_dir"]
     );
-    let router: Router<()> = static_router();
 
     let request = create_request("/linked_dir/a.txt", &Compression::None);
     let response = get_response(router.clone(), request).await;
@@ -1778,24 +1736,22 @@ async fn cache_busted_paths_match_symlinks_by_name() {
 
 #[tokio::test]
 async fn dangling_symlinks_can_be_ignored() {
-    embed_assets!("../test_fixtures/dangling", ignore_paths = ["dangling.txt"]);
-    let router: Router<()> = static_router();
+    let router: Router<()> =
+        embed_assets!("../test_fixtures/dangling", ignore_paths = ["dangling.txt"]);
     let response = get_response(router, create_request("/ok.txt", &Compression::None)).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn glob_characters_in_the_path_are_literal() {
-    embed_assets!("../test_fixtures/glob[1]/assets");
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/glob[1]/assets");
     let response = get_response(router, create_request("/a.txt", &Compression::None)).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn file_names_are_reachable_at_their_encoded_url() {
-    embed_assets!("../test_fixtures/url_names");
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/url_names");
 
     for (route, status) in [
         ("/with%20space.txt", StatusCode::OK),
@@ -1815,14 +1771,13 @@ async fn file_names_are_reachable_at_their_encoded_url() {
 
 #[tokio::test]
 async fn macro_options_accept_a_trailing_comma() {
-    embed_assets!("../test_fixtures/assets/small", compress = true,);
-    assert!(static_router::<()>().has_routes());
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small", compress = true,);
+    assert!(router.has_routes());
 }
 
 #[tokio::test]
 async fn head_matches_get_without_a_body() {
-    embed_assets!("../test_fixtures/assets/big", compress = true);
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
 
     let get = get_response(
         router.clone(),
@@ -1901,8 +1856,7 @@ async fn embed_asset_handles_ranges_and_preconditions() {
 
 #[tokio::test]
 async fn unsatisfiable_and_ignored_ranges() {
-    embed_assets!("../test_fixtures/assets/small");
-    let router: Router<()> = static_router();
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small");
     let length = include_bytes!("../../test_fixtures/assets/small/app.js").len();
 
     for (range, status) in [
@@ -1935,13 +1889,26 @@ async fn unsatisfiable_and_ignored_ranges() {
 
 #[tokio::test]
 async fn only_get_and_head_are_allowed() {
-    embed_assets!("../test_fixtures/assets/small");
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/small");
     let request = Request::builder()
         .method(Method::POST)
         .uri("/app.js")
         .body(Body::empty())
         .unwrap();
-    let response = get_response(static_router(), request).await;
+    let response = get_response(router, request).await;
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(response.headers().get("allow").unwrap(), "GET,HEAD");
+}
+
+#[tokio::test]
+async fn embed_assets_is_an_expression() {
+    let small: Router<()> = embed_assets!("../test_fixtures/assets/small");
+    let html: Router<()> = embed_assets!("../test_fixtures/assets/with_html");
+    let router = Router::new().nest("/small", small).merge(html);
+
+    for route in ["/small/app.js", "/index.html"] {
+        let response =
+            get_response(router.clone(), create_request(route, &Compression::None)).await;
+        assert_eq!(response.status(), StatusCode::OK, "{route}");
+    }
 }
