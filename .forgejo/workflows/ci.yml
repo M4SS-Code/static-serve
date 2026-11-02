@@ -52,7 +52,7 @@ jobs:
           components: clippy
 
       - name: cargo clippy
-        run: cargo clippy --locked --all-features -- -D warnings
+        run: cargo clippy --locked --all-features --all-targets -- -D warnings
 
   test:
     if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
