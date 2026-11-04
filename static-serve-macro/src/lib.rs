@@ -30,7 +30,7 @@ use error::{Error, GzipType, ZstdType};
 /// to the directory containing `Cargo.toml`.
 ///
 /// The options are `compress`, `ignore_paths`, `strip_html_ext`,
-/// `cache_busted_paths` and `allow_unknown_extensions`. See the
+/// `cache_busted_paths`, `allow_unknown_extensions` and `utf8_charset`. See the
 /// [`static-serve` documentation](https://docs.rs/static-serve) for details.
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
@@ -43,8 +43,9 @@ pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// Evaluates to an `axum::routing::MethodRouter` serving GET and HEAD. The path
 /// is relative to the directory containing `Cargo.toml`.
 ///
-/// The options are `compress`, `cache_bust` and `allow_unknown_extensions`. See
-/// the [`static-serve` documentation](https://docs.rs/static-serve) for details.
+/// The options are `compress`, `cache_bust`, `allow_unknown_extensions` and
+/// `utf8_charset`. See the [`static-serve` documentation](https://docs.rs/static-serve)
+/// for details.
 pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAsset);
     quote! { #parsed }.into()
@@ -80,6 +81,7 @@ struct EmbedAsset {
     should_compress: ShouldCompress,
     cache_busted: IsCacheBusted,
     allow_unknown_extensions: LitBool,
+    utf8_charset: LitBool,
 }
 
 struct AssetFile(LitStr);
@@ -92,6 +94,7 @@ impl Parse for EmbedAsset {
         let mut maybe_should_compress = None;
         let mut maybe_is_cache_busted = None;
         let mut maybe_allow_unknown_extensions = None;
+        let mut maybe_utf8_charset = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -112,11 +115,14 @@ impl Parse for EmbedAsset {
                 "allow_unknown_extensions" => {
                     set_once(&mut maybe_allow_unknown_extensions, input.parse()?, &key)?;
                 }
+                "utf8_charset" => {
+                    set_once(&mut maybe_utf8_charset, input.parse()?, &key)?;
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, or `allow_unknown_extensions` but got {key}"
+                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, `allow_unknown_extensions`, or `utf8_charset` but got {key}"
                         ),
                     ));
                 }
@@ -138,12 +144,17 @@ impl Parse for EmbedAsset {
             value: false,
             span: Span::call_site(),
         });
+        let utf8_charset = maybe_utf8_charset.unwrap_or(LitBool {
+            value: true,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             asset_file,
             should_compress,
             cache_busted,
             allow_unknown_extensions,
+            utf8_charset,
         })
     }
 }
@@ -190,12 +201,14 @@ impl ToTokens for EmbedAsset {
         let ShouldCompress(should_compress) = &self.should_compress;
         let IsCacheBusted(cache_busted) = &self.cache_busted;
         let allow_unknown_extensions = &self.allow_unknown_extensions;
+        let utf8_charset = self.utf8_charset.value;
 
         let result = generate_static_handler(
             asset_file,
             should_compress,
             cache_busted,
             allow_unknown_extensions,
+            utf8_charset,
         );
 
         match result {
@@ -219,6 +232,7 @@ struct EmbedAssets {
     should_strip_html_ext: ShouldStripHtmlExt,
     cache_busted_paths: CacheBustedPaths,
     allow_unknown_extensions: LitBool,
+    utf8_charset: LitBool,
 }
 
 impl Parse for EmbedAssets {
@@ -231,6 +245,7 @@ impl Parse for EmbedAssets {
         let mut maybe_should_strip_html_ext = None;
         let mut maybe_cache_busted_paths = None;
         let mut maybe_allow_unknown_extensions = None;
+        let mut maybe_utf8_charset = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -257,10 +272,13 @@ impl Parse for EmbedAssets {
                 "allow_unknown_extensions" => {
                     set_once(&mut maybe_allow_unknown_extensions, input.parse()?, &key)?;
                 }
+                "utf8_charset" => {
+                    set_once(&mut maybe_utf8_charset, input.parse()?, &key)?;
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, or `allow_unknown_extensions`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, `allow_unknown_extensions`, or `utf8_charset`",
                     ));
                 }
             }
@@ -292,6 +310,10 @@ impl Parse for EmbedAssets {
             value: false,
             span: Span::call_site(),
         });
+        let utf8_charset = maybe_utf8_charset.unwrap_or(LitBool {
+            value: true,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             assets_dir,
@@ -300,6 +322,7 @@ impl Parse for EmbedAssets {
             should_strip_html_ext,
             cache_busted_paths,
             allow_unknown_extensions,
+            utf8_charset,
         })
     }
 }
@@ -312,6 +335,7 @@ impl ToTokens for EmbedAssets {
         let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
         let cache_busted_paths = &self.cache_busted_paths;
         let allow_unknown_extensions = &self.allow_unknown_extensions;
+        let utf8_charset = self.utf8_charset.value;
 
         let result = generate_static_routes(
             assets_dir,
@@ -320,6 +344,7 @@ impl ToTokens for EmbedAssets {
             should_strip_html_ext,
             cache_busted_paths,
             allow_unknown_extensions.value,
+            utf8_charset,
         );
 
         match result {
@@ -506,6 +531,7 @@ fn generate_static_routes(
     should_strip_html_ext: &LitBool,
     cache_busted_paths: &CacheBustedPaths,
     allow_unknown_extensions: bool,
+    utf8_charset: bool,
 ) -> Result<TokenStream, error::Error> {
     let assets_dir_abs = resolve_path(&assets_dir.value())
         .canonicalize()
@@ -547,6 +573,7 @@ fn generate_static_routes(
             should_compress,
             should_strip_html_ext,
             allow_unknown_extensions,
+            utf8_charset,
         )?;
 
         let mut web_paths = Vec::new();
@@ -673,6 +700,7 @@ fn generate_static_handler(
     should_compress: &LitBool,
     cache_busted: &LitBool,
     allow_unknown_extensions: &LitBool,
+    utf8_charset: bool,
 ) -> Result<TokenStream, error::Error> {
     let asset_file_abs = resolve_path(&asset_file.value())
         .canonicalize()
@@ -695,6 +723,7 @@ fn generate_static_handler(
             span: Span::call_site(),
         },
         allow_unknown_extensions.value(),
+        utf8_charset,
     )?;
 
     let route = quote! {
@@ -745,6 +774,7 @@ impl EmbeddedFileInfo {
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
         allow_unknown_extensions: bool,
+        utf8_charset: bool,
     ) -> Result<Self, Error> {
         let contents = fs::read(pathbuf).map_err(|error| Error::CannotReadEntryContents {
             entry: pathbuf.to_path_buf(),
@@ -784,11 +814,12 @@ impl EmbeddedFileInfo {
             None
         };
 
-        let content_type = if takes_charset(&content_type) && str::from_utf8(&contents).is_ok() {
-            with_utf8_charset(&content_type)
-        } else {
-            content_type
-        };
+        let content_type =
+            if utf8_charset && takes_charset(&content_type) && str::from_utf8(&contents).is_ok() {
+                with_utf8_charset(&content_type)
+            } else {
+                content_type
+            };
         let content_type = content_type.to_string();
 
         let etag_str = etag(&contents);

@@ -1912,3 +1912,23 @@ async fn embed_assets_is_an_expression() {
         assert_eq!(response.status(), StatusCode::OK, "{route}");
     }
 }
+
+#[tokio::test]
+async fn utf8_charset_can_be_disabled() {
+    let file = embed_asset!(
+        "../test_fixtures/assets/dist/ignore_me_plz.txt",
+        utf8_charset = false
+    );
+    let dir: Router<()> = embed_assets!("../test_fixtures/assets/small", utf8_charset = false);
+    let router = dir.route("/ignore", file);
+
+    for (route, content_type) in [("/ignore", "text/plain"), ("/styles.css", "text/css")] {
+        let response =
+            get_response(router.clone(), create_request(route, &Compression::None)).await;
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            content_type,
+            "{route}"
+        );
+    }
+}

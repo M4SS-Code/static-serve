@@ -35,6 +35,7 @@ Relative paths start at the directory containing the crate's `Cargo.toml`.
 |---|---|---|---|
 | `compress` | both | `false` | Also embed gzip and zstd bodies, when they save at least 10% |
 | `allow_unknown_extensions` | both | `false` | Serve unknown or missing extensions as `application/octet-stream` instead of failing the build |
+| `utf8_charset` | both | `true` | Add `charset=utf-8` to the `Content-Type` of text files that are valid UTF-8, except for types that already define their encoding, such as `text/javascript` and `text/xml` |
 | `cache_bust` | `embed_asset!` | `false` | Send `Cache-Control: public, max-age=31536000, immutable` |
 | `cache_busted_paths` | `embed_assets!` | `[]` | The same, for these files and directories. Their names must already change with their content, for example by including a hash |
 | `ignore_paths` | `embed_assets!` | `[]` | Skip these files and directories |
