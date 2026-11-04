@@ -9,7 +9,8 @@ use axum::{
         StatusCode,
         header::{
             ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
-            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, IF_RANGE, VARY,
+            CONTENT_SECURITY_POLICY, CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH,
+            IF_NONE_MATCH, IF_RANGE, VARY,
         },
         request::Parts,
     },
@@ -39,6 +40,7 @@ pub struct EmbeddedAsset {
     pub body: EmbeddedBody,
     pub body_gz: Option<EmbeddedBody>,
     pub body_zst: Option<EmbeddedBody>,
+    pub content_security_policy: Option<&'static str>,
     pub cache_busted: bool,
 }
 
@@ -265,6 +267,7 @@ fn static_inner(asset: EmbeddedAsset, request: StaticRequest) -> impl IntoRespon
         body,
         body_gz,
         body_zst,
+        content_security_policy,
         cache_busted,
     } = asset;
     let StaticRequest {
@@ -337,6 +340,8 @@ fn static_inner(asset: EmbeddedAsset, request: StaticRequest) -> impl IntoRespon
                 accept_ranges,
                 [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
                 optional_content_encoding,
+                content_security_policy
+                    .map(|policy| [(CONTENT_SECURITY_POLICY, HeaderValue::from_static(policy))]),
             ),
             body_range,
         )

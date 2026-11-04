@@ -1932,3 +1932,38 @@ async fn utf8_charset_can_be_disabled() {
         );
     }
 }
+
+#[tokio::test]
+async fn csp_header_is_read_from_the_meta() {
+    let policy = "script-src 'self' 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='; object-src 'none'";
+    let file = embed_asset!("../test_fixtures/csp/index.html", csp_header = true);
+    let dir: Router<()> = embed_assets!("../test_fixtures/csp", csp_header = true, compress = true);
+    let router = dir.route("/single", file);
+
+    for (route, expected) in [
+        ("/index.html", Some(policy)),
+        ("/single", Some(policy)),
+        ("/plain.html", None),
+    ] {
+        for compression in [Compression::None, Compression::Both] {
+            let response = get_response(router.clone(), create_request(route, &compression)).await;
+            assert_eq!(response.status(), StatusCode::OK, "{route}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get("content-security-policy")
+                    .map(|value| value.to_str().unwrap()),
+                expected,
+                "{route}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn csp_header_is_off_by_default() {
+    let router: Router<()> = embed_assets!("../test_fixtures/csp");
+    let response = get_response(router, create_request("/index.html", &Compression::None)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key("content-security-policy"));
+}

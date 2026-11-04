@@ -20,6 +20,7 @@ use syn::{
     parse_macro_input,
 };
 
+mod csp;
 mod error;
 use error::{Error, GzipType, ZstdType};
 
@@ -30,8 +31,9 @@ use error::{Error, GzipType, ZstdType};
 /// to the directory containing `Cargo.toml`.
 ///
 /// The options are `compress`, `ignore_paths`, `strip_html_ext`,
-/// `cache_busted_paths`, `allow_unknown_extensions` and `utf8_charset`. See the
-/// [`static-serve` documentation](https://docs.rs/static-serve) for details.
+/// `cache_busted_paths`, `allow_unknown_extensions`, `utf8_charset` and
+/// `csp_header`. See the [`static-serve` documentation](https://docs.rs/static-serve)
+/// for details.
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
     quote! { #parsed }.into()
@@ -43,9 +45,9 @@ pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 /// Evaluates to an `axum::routing::MethodRouter` serving GET and HEAD. The path
 /// is relative to the directory containing `Cargo.toml`.
 ///
-/// The options are `compress`, `cache_bust`, `allow_unknown_extensions` and
-/// `utf8_charset`. See the [`static-serve` documentation](https://docs.rs/static-serve)
-/// for details.
+/// The options are `compress`, `cache_bust`, `allow_unknown_extensions`,
+/// `utf8_charset` and `csp_header`. See the
+/// [`static-serve` documentation](https://docs.rs/static-serve) for details.
 pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAsset);
     quote! { #parsed }.into()
@@ -82,6 +84,7 @@ struct EmbedAsset {
     cache_busted: IsCacheBusted,
     allow_unknown_extensions: LitBool,
     utf8_charset: LitBool,
+    csp_header: LitBool,
 }
 
 struct AssetFile(LitStr);
@@ -95,6 +98,7 @@ impl Parse for EmbedAsset {
         let mut maybe_is_cache_busted = None;
         let mut maybe_allow_unknown_extensions = None;
         let mut maybe_utf8_charset = None;
+        let mut maybe_csp_header = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -118,11 +122,14 @@ impl Parse for EmbedAsset {
                 "utf8_charset" => {
                     set_once(&mut maybe_utf8_charset, input.parse()?, &key)?;
                 }
+                "csp_header" => {
+                    set_once(&mut maybe_csp_header, input.parse()?, &key)?;
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, `allow_unknown_extensions`, or `utf8_charset` but got {key}"
+                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, `allow_unknown_extensions`, `utf8_charset`, or `csp_header` but got {key}"
                         ),
                     ));
                 }
@@ -148,6 +155,10 @@ impl Parse for EmbedAsset {
             value: true,
             span: Span::call_site(),
         });
+        let csp_header = maybe_csp_header.unwrap_or(LitBool {
+            value: false,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             asset_file,
@@ -155,6 +166,7 @@ impl Parse for EmbedAsset {
             cache_busted,
             allow_unknown_extensions,
             utf8_charset,
+            csp_header,
         })
     }
 }
@@ -202,6 +214,7 @@ impl ToTokens for EmbedAsset {
         let IsCacheBusted(cache_busted) = &self.cache_busted;
         let allow_unknown_extensions = &self.allow_unknown_extensions;
         let utf8_charset = self.utf8_charset.value;
+        let csp_header = self.csp_header.value;
 
         let result = generate_static_handler(
             asset_file,
@@ -209,6 +222,7 @@ impl ToTokens for EmbedAsset {
             cache_busted,
             allow_unknown_extensions,
             utf8_charset,
+            csp_header,
         );
 
         match result {
@@ -233,6 +247,7 @@ struct EmbedAssets {
     cache_busted_paths: CacheBustedPaths,
     allow_unknown_extensions: LitBool,
     utf8_charset: LitBool,
+    csp_header: LitBool,
 }
 
 impl Parse for EmbedAssets {
@@ -246,6 +261,7 @@ impl Parse for EmbedAssets {
         let mut maybe_cache_busted_paths = None;
         let mut maybe_allow_unknown_extensions = None;
         let mut maybe_utf8_charset = None;
+        let mut maybe_csp_header = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
@@ -275,10 +291,13 @@ impl Parse for EmbedAssets {
                 "utf8_charset" => {
                     set_once(&mut maybe_utf8_charset, input.parse()?, &key)?;
                 }
+                "csp_header" => {
+                    set_once(&mut maybe_csp_header, input.parse()?, &key)?;
+                }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, `allow_unknown_extensions`, or `utf8_charset`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, `allow_unknown_extensions`, `utf8_charset`, or `csp_header`",
                     ));
                 }
             }
@@ -314,6 +333,10 @@ impl Parse for EmbedAssets {
             value: true,
             span: Span::call_site(),
         });
+        let csp_header = maybe_csp_header.unwrap_or(LitBool {
+            value: false,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             assets_dir,
@@ -323,6 +346,7 @@ impl Parse for EmbedAssets {
             cache_busted_paths,
             allow_unknown_extensions,
             utf8_charset,
+            csp_header,
         })
     }
 }
@@ -517,6 +541,7 @@ fn generate_static_routes(embed_assets: &EmbedAssets) -> Result<TokenStream, err
         cache_busted_paths,
         allow_unknown_extensions,
         utf8_charset,
+        csp_header,
     } = embed_assets;
     let assets_dir_abs = resolve_path(&assets_dir.value())
         .canonicalize()
@@ -552,6 +577,7 @@ fn generate_static_routes(embed_assets: &EmbedAssets) -> Result<TokenStream, err
             body,
             maybe_gzip,
             maybe_zstd,
+            content_security_policy,
         } = EmbeddedFileInfo::from_path(
             &entry,
             Some(&assets_dir_abs),
@@ -559,6 +585,7 @@ fn generate_static_routes(embed_assets: &EmbedAssets) -> Result<TokenStream, err
             should_strip_html_ext,
             allow_unknown_extensions.value,
             utf8_charset.value,
+            csp_header.value,
         )?;
 
         let mut web_paths = Vec::new();
@@ -579,6 +606,7 @@ fn generate_static_routes(embed_assets: &EmbedAssets) -> Result<TokenStream, err
             &body,
             &maybe_gzip,
             &maybe_zstd,
+            &content_security_policy,
             is_entry_cache_busted,
         );
         routes.push(quote! {
@@ -685,6 +713,7 @@ fn generate_static_handler(
     cache_busted: &LitBool,
     allow_unknown_extensions: &LitBool,
     utf8_charset: bool,
+    csp_header: bool,
 ) -> Result<TokenStream, error::Error> {
     let asset_file_abs = resolve_path(&asset_file.value())
         .canonicalize()
@@ -698,6 +727,7 @@ fn generate_static_handler(
         body,
         maybe_gzip,
         maybe_zstd,
+        content_security_policy,
     } = EmbeddedFileInfo::from_path(
         &asset_file_abs,
         None,
@@ -708,6 +738,7 @@ fn generate_static_handler(
         },
         allow_unknown_extensions.value(),
         utf8_charset,
+        csp_header,
     )?;
 
     let asset = embedded_asset(
@@ -715,6 +746,7 @@ fn generate_static_handler(
         &body,
         &maybe_gzip,
         &maybe_zstd,
+        &content_security_policy,
         cache_busted.value,
     );
     let route = quote! {
@@ -730,6 +762,7 @@ fn embedded_asset(
     body: &TokenStream,
     maybe_gzip: &OptionCompressedBody,
     maybe_zstd: &OptionCompressedBody,
+    content_security_policy: &OptionStr,
     cache_busted: bool,
 ) -> TokenStream {
     quote! {
@@ -738,6 +771,7 @@ fn embedded_asset(
             body: #body,
             body_gz: #maybe_gzip,
             body_zst: #maybe_zstd,
+            content_security_policy: #content_security_policy,
             cache_busted: #cache_busted,
         }
     }
@@ -769,6 +803,20 @@ struct EmbeddedFileInfo {
     body: TokenStream,
     maybe_gzip: OptionCompressedBody,
     maybe_zstd: OptionCompressedBody,
+    /// The `Content-Security-Policy` header declared by an HTML document
+    content_security_policy: OptionStr,
+}
+
+/// An optional `&'static str`
+struct OptionStr(Option<String>);
+impl ToTokens for OptionStr {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(if let Some(value) = &self.0 {
+            quote! { ::std::option::Option::Some(#value) }
+        } else {
+            quote! { ::std::option::Option::None }
+        });
+    }
 }
 
 impl EmbeddedFileInfo {
@@ -779,6 +827,7 @@ impl EmbeddedFileInfo {
         should_strip_html_ext: &LitBool,
         allow_unknown_extensions: bool,
         utf8_charset: bool,
+        csp_header: bool,
     ) -> Result<Self, Error> {
         let contents = fs::read(pathbuf).map_err(|error| Error::CannotReadEntryContents {
             entry: pathbuf.to_path_buf(),
@@ -818,6 +867,15 @@ impl EmbeddedFileInfo {
             None
         };
 
+        let content_security_policy = if csp_header && content_type == mime::TEXT_HTML {
+            csp::meta_policies(&contents).map_err(|error| Error::ContentSecurityPolicy {
+                entry: pathbuf.to_path_buf(),
+                error,
+            })?
+        } else {
+            None
+        };
+
         let content_type =
             if utf8_charset && takes_charset(&content_type) && str::from_utf8(&contents).is_ok() {
                 with_utf8_charset(&content_type)
@@ -842,6 +900,7 @@ impl EmbeddedFileInfo {
             body,
             maybe_gzip,
             maybe_zstd,
+            content_security_policy: OptionStr(content_security_policy),
         })
     }
 }
@@ -1139,6 +1198,21 @@ mod tests {
         assert_eq!(error, "Duplicate key `compress` in macro options");
         assert_eq!(
             embed_assets_error(quote!("../test_fixtures/assets/small", compress = true,)),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_csp_fails_the_build() {
+        let error =
+            embed_assets_error(quote!("../test_fixtures/csp_invalid", csp_header = true)).unwrap();
+        assert!(
+            error.starts_with("Cannot move the Content Security Policy of")
+                && error.ends_with("The policy contains a comma, which would split it into separate policies in a header"),
+            "{error}"
+        );
+        assert_eq!(
+            embed_assets_error(quote!("../test_fixtures/csp_invalid")),
             None
         );
     }

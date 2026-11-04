@@ -36,12 +36,15 @@ Relative paths start at the directory containing the crate's `Cargo.toml`.
 | `compress` | both | `false` | Also embed gzip and zstd bodies, when they save at least 10% |
 | `allow_unknown_extensions` | both | `false` | Serve unknown or missing extensions as `application/octet-stream` instead of failing the build |
 | `utf8_charset` | both | `true` | Add `charset=utf-8` to the `Content-Type` of text files that are valid UTF-8, except for types that already define their encoding, such as `text/javascript` and `text/xml` |
+| `csp_header` | both | `false` | Send the policy of `<meta http-equiv="Content-Security-Policy">` in the `<head>` of HTML files as a `Content-Security-Policy` header. The `<meta>` stays in the page |
 | `cache_bust` | `embed_asset!` | `false` | Send `Cache-Control: public, max-age=31536000, immutable` |
 | `cache_busted_paths` | `embed_assets!` | `[]` | The same, for these files and directories. Their names must already change with their content, for example by including a hash |
 | `ignore_paths` | `embed_assets!` | `[]` | Skip these files and directories |
 | `strip_html_ext` | `embed_assets!` | `false` | Serve `foo.html` at `/foo`, `index.html` at `/` and `docs/index.html` at `/docs/`, with no redirect from `/docs` |
 
 Paths in `cache_busted_paths` and `ignore_paths` are relative to the embedded directory, and must exist inside of it.
+
+`csp_header` makes the policies that static site generators such as `@sveltejs/adapter-static` write into each page apply from the first byte of the response. Directives that a `<meta>` can't carry, like `frame-ancestors`, can be sent as an additional `Content-Security-Policy` header from a layer above the router: browsers enforce every policy they receive. A policy that isn't printable ASCII, contains a comma or uses an unsupported character reference fails the build.
 
 ## Which files are embedded
 
