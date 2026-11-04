@@ -26,17 +26,6 @@ use error::{Error, GzipType, ZstdType};
 
 #[proc_macro]
 /// Embed and optionally compress static assets for a web server
-///
-/// ```compile_fail,hidden
-/// # // The corresponding successful test is in static-serve/tests/tests.rs,
-/// # // where tests usually belong. It's called serves_unknown_attributes.
-/// # // But only doctests support the `compile_fail` attribute so the failing
-/// # // test is placed here.
-/// embed_assets!(
-///     "../static-serve/test_fixtures/unknown_extensions",
-///     allow_unknown_extensions = false
-/// );
-/// ```
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
     quote! { #parsed }.into()
@@ -917,7 +906,68 @@ fn strip_html_ext(path: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_compression_significant;
+    use proc_macro2::{TokenStream, TokenTree};
+    use quote::{ToTokens, quote};
+    use syn::LitStr;
+
+    use super::{EmbedAssets, is_compression_significant};
+
+    /// Expand `embed_assets!` and return the message of the error that fails
+    /// the build, if any
+    ///
+    /// Unlike a `compile_fail` doctest, this tells which error the expansion
+    /// fails with.
+    fn embed_assets_error(input: TokenStream) -> Option<String> {
+        let expanded = match syn::parse2::<EmbedAssets>(input) {
+            Ok(embed_assets) => embed_assets.into_token_stream(),
+            Err(error) => error.to_compile_error(),
+        };
+
+        let mut tokens = expanded.into_iter();
+        tokens
+            .find(|token| matches!(token, TokenTree::Ident(ident) if ident == "compile_error"))?;
+        tokens.find_map(|token| match token {
+            TokenTree::Group(group) => syn::parse2::<LitStr>(group.stream())
+                .ok()
+                .map(|message| message.value()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn duplicate_web_paths_fail_the_build() {
+        // Registering a path twice would panic when the `Router` is built
+        assert_eq!(
+            embed_assets_error(quote!("../test_fixtures/collision")),
+            None
+        );
+        let error = embed_assets_error(quote!("../test_fixtures/collision", strip_html_ext = true))
+            .unwrap();
+        assert!(
+            error.starts_with("Multiple files map to the same web path /foo"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn unknown_extensions_fail_the_build() {
+        // The fixture holds `example.wtf` and the extensionless `.DS_STORE`
+        let error = embed_assets_error(quote!("../test_fixtures/unknown_extensions")).unwrap();
+        assert!(error.starts_with("Missing file extension"), "{error}");
+        let error = embed_assets_error(quote!(
+            "../test_fixtures/unknown_extensions",
+            ignore_paths = [".DS_STORE"]
+        ))
+        .unwrap();
+        assert!(error.starts_with("Unknown file extension"), "{error}");
+        assert_eq!(
+            embed_assets_error(quote!(
+                "../test_fixtures/unknown_extensions",
+                allow_unknown_extensions = true
+            )),
+            None
+        );
+    }
 
     #[test]
     fn compression_significance_threshold() {

@@ -1350,9 +1350,8 @@ async fn if_range_mismatched_allows_compression() {
     assert_eq!(parts.headers.get(CONTENT_ENCODING).unwrap(), "zstd");
 }
 
-/// The corresponding failing test is in static-serve-macro/src/lib.rs
-/// in the `embed_assets` docstring, because only doctests support
-/// the `compile_fail` attribute.
+/// The corresponding failing test is `unknown_extensions_fail_the_build` in
+/// static-serve-macro.
 #[tokio::test]
 async fn serves_unknown_extensions() {
     embed_assets!(
