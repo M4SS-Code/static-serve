@@ -329,23 +329,7 @@ impl Parse for EmbedAssets {
 
 impl ToTokens for EmbedAssets {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let AssetsDir(assets_dir) = &self.assets_dir;
-        let ignore_paths = &self.validated_ignore_paths;
-        let ShouldCompress(should_compress) = &self.should_compress;
-        let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
-        let cache_busted_paths = &self.cache_busted_paths;
-        let allow_unknown_extensions = &self.allow_unknown_extensions;
-        let utf8_charset = self.utf8_charset.value;
-
-        let result = generate_static_routes(
-            assets_dir,
-            ignore_paths,
-            should_compress,
-            should_strip_html_ext,
-            cache_busted_paths,
-            allow_unknown_extensions.value,
-            utf8_charset,
-        );
+        let result = generate_static_routes(self);
 
         match result {
             Ok(value) => {
@@ -524,15 +508,16 @@ fn parse_dirs(input: ParseStream) -> syn::Result<Vec<(PathBuf, Span)>> {
     Ok(dirs)
 }
 
-fn generate_static_routes(
-    assets_dir: &LitStr,
-    ignore_paths: &IgnorePaths,
-    should_compress: &LitBool,
-    should_strip_html_ext: &LitBool,
-    cache_busted_paths: &CacheBustedPaths,
-    allow_unknown_extensions: bool,
-    utf8_charset: bool,
-) -> Result<TokenStream, error::Error> {
+fn generate_static_routes(embed_assets: &EmbedAssets) -> Result<TokenStream, error::Error> {
+    let EmbedAssets {
+        assets_dir: AssetsDir(assets_dir),
+        validated_ignore_paths: ignore_paths,
+        should_compress: ShouldCompress(should_compress),
+        should_strip_html_ext: ShouldStripHtmlExt(should_strip_html_ext),
+        cache_busted_paths,
+        allow_unknown_extensions,
+        utf8_charset,
+    } = embed_assets;
     let assets_dir_abs = resolve_path(&assets_dir.value())
         .canonicalize()
         .map_err(|error| Error::CannotCanonicalizeDirectory {
@@ -572,8 +557,8 @@ fn generate_static_routes(
             Some(&assets_dir_abs),
             should_compress,
             should_strip_html_ext,
-            allow_unknown_extensions,
-            utf8_charset,
+            allow_unknown_extensions.value,
+            utf8_charset.value,
         )?;
 
         let mut web_paths = Vec::new();
@@ -589,16 +574,15 @@ fn generate_static_routes(
             }
         }
 
+        let asset = embedded_asset(
+            &content_type,
+            &body,
+            &maybe_gzip,
+            &maybe_zstd,
+            is_entry_cache_busted,
+        );
         routes.push(quote! {
-            router = ::static_serve::static_route(
-                router,
-                &[#(#web_paths),*],
-                #content_type,
-                #body,
-                #maybe_gzip,
-                #maybe_zstd,
-                #is_entry_cache_busted
-            );
+            router = ::static_serve::static_route(router, &[#(#web_paths),*], #asset);
         });
     }
 
@@ -726,17 +710,37 @@ fn generate_static_handler(
         utf8_charset,
     )?;
 
+    let asset = embedded_asset(
+        &content_type,
+        &body,
+        &maybe_gzip,
+        &maybe_zstd,
+        cache_busted.value,
+    );
     let route = quote! {
-        ::static_serve::static_method_router(
-            #content_type,
-            #body,
-            #maybe_gzip,
-            #maybe_zstd,
-            #cache_busted
-        )
+        ::static_serve::static_method_router(#asset)
     };
 
     Ok(route)
+}
+
+/// Build the `EmbeddedAsset` given to the runtime
+fn embedded_asset(
+    content_type: &str,
+    body: &TokenStream,
+    maybe_gzip: &OptionCompressedBody,
+    maybe_zstd: &OptionCompressedBody,
+    cache_busted: bool,
+) -> TokenStream {
+    quote! {
+        ::static_serve::EmbeddedAsset {
+            content_type: #content_type,
+            body: #body,
+            body_gz: #maybe_gzip,
+            body_zst: #maybe_zstd,
+            cache_busted: #cache_busted,
+        }
+    }
 }
 
 /// A compressed body, if worth serving, and the `ETag` of its bytes

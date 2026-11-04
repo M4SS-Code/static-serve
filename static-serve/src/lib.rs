@@ -31,6 +31,17 @@ pub struct EmbeddedBody {
     pub etag: &'static str,
 }
 
+/// An embedded asset and the headers that describe it
+#[doc(hidden)]
+#[derive(Debug, Copy, Clone)]
+pub struct EmbeddedAsset {
+    pub content_type: &'static str,
+    pub body: EmbeddedBody,
+    pub body_gz: Option<EmbeddedBody>,
+    pub body_zst: Option<EmbeddedBody>,
+    pub cache_busted: bool,
+}
+
 /// The weights, in thousandths, listed in `Accept-Encoding`
 #[derive(Debug, Copy, Clone, Default)]
 struct AcceptEncoding {
@@ -223,19 +234,11 @@ where
 
 #[doc(hidden)]
 /// The router for adding routes for static assets
-pub fn static_route<S>(
-    mut router: Router<S>,
-    web_paths: &[&str],
-    content_type: &'static str,
-    body: EmbeddedBody,
-    body_gz: Option<EmbeddedBody>,
-    body_zst: Option<EmbeddedBody>,
-    cache_busted: bool,
-) -> Router<S>
+pub fn static_route<S>(mut router: Router<S>, web_paths: &[&str], asset: EmbeddedAsset) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    let method_router = static_method_router(content_type, body, body_gz, body_zst, cache_busted);
+    let method_router = static_method_router(asset);
     for web_path in web_paths {
         router = router.route(web_path, method_router.clone());
     }
@@ -246,32 +249,24 @@ where
 /// Creates a route for a single static asset.
 ///
 /// Used by the `embed_asset!` macro, so it needs to be `pub`.
-pub fn static_method_router<S>(
-    content_type: &'static str,
-    body: EmbeddedBody,
-    body_gz: Option<EmbeddedBody>,
-    body_zst: Option<EmbeddedBody>,
-    cache_busted: bool,
-) -> MethodRouter<S>
+pub fn static_method_router<S>(asset: EmbeddedAsset) -> MethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
     MethodRouter::get(
         MethodRouter::new(),
-        move |request: StaticRequest| async move {
-            static_inner(content_type, body, body_gz, body_zst, cache_busted, request)
-        },
+        move |request: StaticRequest| async move { static_inner(asset, request) },
     )
 }
 
-fn static_inner(
-    content_type: &'static str,
-    body: EmbeddedBody,
-    body_gz: Option<EmbeddedBody>,
-    body_zst: Option<EmbeddedBody>,
-    cache_busted: bool,
-    request: StaticRequest,
-) -> impl IntoResponse {
+fn static_inner(asset: EmbeddedAsset, request: StaticRequest) -> impl IntoResponse {
+    let EmbeddedAsset {
+        content_type,
+        body,
+        body_gz,
+        body_zst,
+        cache_busted,
+    } = asset;
     let StaticRequest {
         accept_encoding,
         conditions,
