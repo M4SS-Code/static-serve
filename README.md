@@ -37,6 +37,7 @@ Relative paths start at the directory containing the crate's `Cargo.toml`. Each 
 | `compress` | both | `false` | Also embed gzip and zstd bodies, when they save more than 10% |
 | `allow_unknown_extensions` | both | `false` | Serve unknown or missing extensions as `application/octet-stream` instead of failing the build |
 | `utf8_charset` | both | `true` | Add `charset=utf-8` to the `Content-Type` of text files that are valid UTF-8, except for types that already define their encoding: `text/javascript`, `text/calendar`, `text/vtt` and `text/xml` |
+| `csp_header` | both | `false` | Send the policy of `<meta http-equiv="Content-Security-Policy">` in the `<head>` of HTML files as a `Content-Security-Policy` header. The `<meta>` stays in the page |
 | `cache_bust` | `embed_asset!` | `false` | Send `Cache-Control: public, max-age=31536000, immutable` |
 | `cache_busted_paths` | `embed_assets!` | `[]` | The same, for these files and directories. Their names must already change with their content, for example by including a hash |
 | `ignore_paths` | `embed_assets!` | `[]` | Skip these files and directories |
@@ -45,6 +46,8 @@ Relative paths start at the directory containing the crate's `Cargo.toml`. Each 
 Paths in `cache_busted_paths` and `ignore_paths` are relative to the embedded directory, and must exist inside of it.
 
 Set `utf8_charset = false` if a layer above the router sets the charset, or for HTML that declares a legacy encoding with `<meta charset>` while only containing ASCII: browsers let the HTTP charset override `<meta>`, which also changes the encoding of the forms and URLs the page submits.
+
+`csp_header` makes the policies that static site generators such as `@sveltejs/adapter-static` write into each page apply from the first byte of the response. Directives that a `<meta>` can't carry, like `frame-ancestors`, can be sent as an additional `Content-Security-Policy` header from a layer above the router: browsers enforce every policy they receive. A policy that isn't printable ASCII, contains a comma or uses an unsupported character reference fails the build.
 
 ## Features
 

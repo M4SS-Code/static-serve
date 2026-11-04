@@ -2,6 +2,8 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
+use crate::csp::CspError;
+
 #[derive(Debug, Error)]
 pub(crate) enum Error {
     #[error("Unknown file extension of {0}")]
@@ -61,6 +63,12 @@ pub(crate) enum Error {
         entry: PathBuf,
         #[source]
         error: io::Error,
+    },
+    #[error("Cannot move the Content Security Policy of {entry} to a header")]
+    ContentSecurityPolicy {
+        entry: PathBuf,
+        #[source]
+        error: CspError,
     },
     #[error("Multiple files map to the same web path {web_path}: {first_file} and {second_file}")]
     DuplicateWebPath {
