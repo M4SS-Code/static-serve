@@ -44,7 +44,11 @@ Relative paths start at the directory containing the crate's `Cargo.toml`.
 
 Paths in `cache_busted_paths` and `ignore_paths` are relative to the embedded directory, and must exist inside of it.
 
-`csp_header` makes the policies that static site generators such as `@sveltejs/adapter-static` write into each page apply from the first byte of the response. Directives that a `<meta>` can't carry, like `frame-ancestors`, can be sent as an additional `Content-Security-Policy` header from a layer above the router: browsers enforce every policy they receive. A policy that isn't printable ASCII, contains a comma or uses an unsupported character reference fails the build.
+`csp_header` makes the policies that static site generators such as `@sveltejs/adapter-static` write into each page apply from the first byte of the response. Directives that a `<meta>` can't carry, like `frame-ancestors`, can be sent as an additional `Content-Security-Policy` header from a layer above the router: browsers enforce every policy they receive. Send it with tower-http's `SetResponseHeaderLayer::appending`, not `if_not_present` or `overriding`: on pages with a `<meta>` policy, `csp_header` has already set the header, so `if_not_present` would skip your policy and `overriding` would remove the one from the `<meta>`.
+
+`sandbox`, `frame-ancestors` and `report-uri` are ignored in a `<meta>` but enforced in a header, so with `csp_header` a page that has them in its `<meta>` gets stricter. `@sveltejs/adapter-static` already leaves them out of the `<meta>`.
+
+Line breaks in a policy are sent as spaces. A policy that isn't printable ASCII, contains a comma or uses an unsupported character reference fails the build.
 
 ## Which files are embedded
 
