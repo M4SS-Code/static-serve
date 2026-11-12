@@ -47,7 +47,9 @@ Paths in `cache_busted_paths` and `ignore_paths` are relative to the embedded di
 
 Set `utf8_charset = false` if a layer above the router sets the charset, or for HTML that declares a legacy encoding with `<meta charset>` while only containing ASCII: browsers let the HTTP charset override `<meta>`, which also changes the encoding of the forms and URLs the page submits.
 
-`csp_header` makes the policies that static site generators such as `@sveltejs/adapter-static` write into each page apply from the first byte of the response. Directives that a `<meta>` can't carry, like `frame-ancestors`, can be sent as an additional `Content-Security-Policy` header from a layer above the router: browsers enforce every policy they receive.
+`csp_header` makes the policies that static site generators such as `@sveltejs/adapter-static` write into each page apply from the first byte of the response. Directives that a `<meta>` can't carry, like `frame-ancestors`, can be sent as an additional `Content-Security-Policy` header from a layer above the router: browsers enforce every policy they receive. Send it with tower-http's `SetResponseHeaderLayer::appending`, not `if_not_present` or `overriding`: on pages with a `<meta>` policy, `csp_header` has already set the header, so `if_not_present` would skip your policy and `overriding` would remove the one from the `<meta>`.
+
+`sandbox`, `frame-ancestors` and `report-uri` are ignored in a `<meta>` but enforced in a header, so with `csp_header` a page that has them in its `<meta>` gets stricter. `@sveltejs/adapter-static` already leaves them out of the `<meta>`.
 
 Line breaks in a policy are sent as spaces. A policy that isn't printable ASCII, contains a comma or uses an unsupported character reference fails the build.
 
