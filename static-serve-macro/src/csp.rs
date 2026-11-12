@@ -89,7 +89,10 @@ pub(crate) fn meta_policies(html: &[u8]) -> Result<Option<String>, CspError> {
                 .is_some_and(|value| value.eq_ignore_ascii_case(b"content-security-policy"))
                 && let Some(content) = attribute(&attributes, b"content")
             {
-                let policy = decode_character_references(content)?;
+                // CSP splits on ASCII whitespace, so a policy written over
+                // several lines means the same with spaces, which fit a header
+                let policy =
+                    decode_character_references(content)?.replace(['\n', '\r', '\x0c'], " ");
                 let policy = policy.trim_matches(|c: char| c.is_ascii_whitespace());
                 if !policy.is_empty() {
                     validate_header_value(policy)?;
@@ -344,7 +347,7 @@ mod tests {
             ("a&nbsp;b", "UnsupportedCharacterReference"),
             ("a&ampb", "UnsupportedCharacterReference"),
             ("caf\u{e9}", "InvalidHeaderCharacter"),
-            ("a&#10;b", "InvalidHeaderCharacter"),
+            ("a\u{7f}b", "InvalidHeaderCharacter"),
         ] {
             let html =
                 format!(r#"<meta http-equiv="content-security-policy" content="{content}">"#);
@@ -361,6 +364,19 @@ mod tests {
         assert_eq!(
             policies(r#"<meta http-equiv="content-security-policy" content="a & b">"#).as_deref(),
             Some("a & b")
+        );
+    }
+
+    #[test]
+    fn turns_line_breaks_into_spaces() {
+        let html = "<meta http-equiv=\"content-security-policy\" content=\"\n  default-src 'self';\r\n  img-src *\x0c\n\">";
+        assert_eq!(
+            policies(html).as_deref(),
+            Some("default-src 'self';    img-src *")
+        );
+        assert_eq!(
+            policies(r#"<meta http-equiv="content-security-policy" content="a&#10;b">"#).as_deref(),
+            Some("a b")
         );
     }
 }
