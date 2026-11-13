@@ -3,15 +3,14 @@
 
 use std::{
     collections::HashMap,
-    convert::Into,
-    fs,
+    env, fs,
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use display_full_error::DisplayFullError;
 use flate2::write::GzEncoder;
-use glob::glob;
+use mime::Mime;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use sha2::{Digest as _, Sha256};
@@ -21,22 +20,20 @@ use syn::{
     parse_macro_input,
 };
 
+mod csp;
 mod error;
 use error::{Error, GzipType, ZstdType};
 
 #[proc_macro]
-/// Embed and optionally compress static assets for a web server
+/// Embed and optionally compress a directory of static assets for a web server
 ///
-/// ```compile_fail,hidden
-/// # // The corresponding successful test is in static-serve/tests/tests.rs,
-/// # // where tests usually belong. It's called serves_unknown_attributes.
-/// # // But only doctests support the `compile_fail` attribute so the failing
-/// # // test is placed here.
-/// embed_assets!(
-///     "../static-serve/test_unknown_extensions",
-///     allow_unknown_extensions = false
-/// );
-/// ```
+/// Evaluates to an `axum::Router` with one route per file. The path is relative
+/// to the directory containing `Cargo.toml`.
+///
+/// The options are `compress`, `ignore_paths`, `strip_html_ext`,
+/// `cache_busted_paths`, `allow_unknown_extensions`, `utf8_charset` and
+/// `csp_header`. See the [`static-serve` documentation](https://docs.rs/static-serve)
+/// for details.
 pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAssets);
     quote! { #parsed }.into()
@@ -44,9 +41,41 @@ pub fn embed_assets(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 #[proc_macro]
 /// Embed and optionally compress a single static asset for a web server
+///
+/// Evaluates to an `axum::routing::MethodRouter` serving GET and HEAD. The path
+/// is relative to the directory containing `Cargo.toml`.
+///
+/// The options are `compress`, `cache_bust`, `allow_unknown_extensions`,
+/// `utf8_charset` and `csp_header`. See the
+/// [`static-serve` documentation](https://docs.rs/static-serve) for details.
 pub fn embed_asset(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let parsed = parse_macro_input!(input as EmbedAsset);
     quote! { #parsed }.into()
+}
+
+/// Resolve a path given to a macro against the directory of `Cargo.toml`
+///
+/// The working directory of rustc is the workspace root for workspace members
+/// and the package root otherwise, so it would give the same path different
+/// meanings. It's only used if the crate isn't being built by Cargo.
+fn resolve_path(path: &str) -> PathBuf {
+    env::var_os("CARGO_MANIFEST_DIR").map_or_else(
+        || PathBuf::from(path),
+        |manifest_dir| Path::new(&manifest_dir).join(path),
+    )
+}
+
+/// Store a macro option, rejecting a repeated key instead of silently keeping
+/// the last value
+fn set_once<T>(option: &mut Option<T>, value: T, key: &Ident) -> syn::Result<()> {
+    if option.replace(value).is_some() {
+        return Err(syn::Error::new(
+            key.span(),
+            format!("Duplicate key `{key}` in macro options"),
+        ));
+    }
+
+    Ok(())
 }
 
 struct EmbedAsset {
@@ -54,6 +83,8 @@ struct EmbedAsset {
     should_compress: ShouldCompress,
     cache_busted: IsCacheBusted,
     allow_unknown_extensions: LitBool,
+    utf8_charset: LitBool,
+    csp_header: LitBool,
 }
 
 struct AssetFile(LitStr);
@@ -66,30 +97,39 @@ impl Parse for EmbedAsset {
         let mut maybe_should_compress = None;
         let mut maybe_is_cache_busted = None;
         let mut maybe_allow_unknown_extensions = None;
+        let mut maybe_utf8_charset = None;
+        let mut maybe_csp_header = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
             match key.to_string().as_str() {
                 "compress" => {
-                    let value = input.parse()?;
-                    maybe_should_compress = Some(value);
+                    set_once(&mut maybe_should_compress, input.parse()?, &key)?;
                 }
                 "cache_bust" => {
-                    let value = input.parse()?;
-                    maybe_is_cache_busted = Some(value);
+                    set_once(&mut maybe_is_cache_busted, input.parse()?, &key)?;
                 }
                 "allow_unknown_extensions" => {
-                    let value = input.parse()?;
-                    maybe_allow_unknown_extensions = Some(value);
+                    set_once(&mut maybe_allow_unknown_extensions, input.parse()?, &key)?;
+                }
+                "utf8_charset" => {
+                    set_once(&mut maybe_utf8_charset, input.parse()?, &key)?;
+                }
+                "csp_header" => {
+                    set_once(&mut maybe_csp_header, input.parse()?, &key)?;
                 }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, or `allow_unknown_extensions` but got {key}"
+                            "Unknown key in `embed_asset!` macro. Expected `compress`, `cache_bust`, `allow_unknown_extensions`, `utf8_charset`, or `csp_header` but got {key}"
                         ),
                     ));
                 }
@@ -111,12 +151,22 @@ impl Parse for EmbedAsset {
             value: false,
             span: Span::call_site(),
         });
+        let utf8_charset = maybe_utf8_charset.unwrap_or(LitBool {
+            value: true,
+            span: Span::call_site(),
+        });
+        let csp_header = maybe_csp_header.unwrap_or(LitBool {
+            value: false,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             asset_file,
             should_compress,
             cache_busted,
             allow_unknown_extensions,
+            utf8_charset,
+            csp_header,
         })
     }
 }
@@ -126,13 +176,16 @@ impl Parse for AssetFile {
         let input_span = input.span();
         let asset_file: LitStr = input.parse()?;
         let literal = asset_file.value();
-        let path = Path::new(&literal);
-        let metadata = match fs::metadata(path) {
+        let path = resolve_path(&literal);
+        let metadata = match fs::metadata(&path) {
             Ok(meta) => meta,
             Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
                 return Err(syn::Error::new(
                     input_span,
-                    format!("The specified asset file ({literal}) does not exist."),
+                    format!(
+                        "The specified asset file ({}) does not exist. Relative paths start at the directory of Cargo.toml.",
+                        path.display()
+                    ),
                 ));
             }
             Err(e) => {
@@ -160,12 +213,16 @@ impl ToTokens for EmbedAsset {
         let ShouldCompress(should_compress) = &self.should_compress;
         let IsCacheBusted(cache_busted) = &self.cache_busted;
         let allow_unknown_extensions = &self.allow_unknown_extensions;
+        let utf8_charset = self.utf8_charset.value;
+        let csp_header = self.csp_header.value;
 
         let result = generate_static_handler(
             asset_file,
             should_compress,
             cache_busted,
             allow_unknown_extensions,
+            utf8_charset,
+            csp_header,
         );
 
         match result {
@@ -174,8 +231,8 @@ impl ToTokens for EmbedAsset {
                     #value
                 });
             }
-            Err(err_message) => {
-                let error = syn::Error::new(Span::call_site(), err_message);
+            Err(err) => {
+                let error = syn::Error::new(Span::call_site(), DisplayFullError(&err));
                 tokens.extend(error.to_compile_error());
             }
         }
@@ -189,6 +246,8 @@ struct EmbedAssets {
     should_strip_html_ext: ShouldStripHtmlExt,
     cache_busted_paths: CacheBustedPaths,
     allow_unknown_extensions: LitBool,
+    utf8_charset: LitBool,
+    csp_header: LitBool,
 }
 
 impl Parse for EmbedAssets {
@@ -201,37 +260,44 @@ impl Parse for EmbedAssets {
         let mut maybe_should_strip_html_ext = None;
         let mut maybe_cache_busted_paths = None;
         let mut maybe_allow_unknown_extensions = None;
+        let mut maybe_utf8_charset = None;
+        let mut maybe_csp_header = None;
 
         while !input.is_empty() {
             input.parse::<Token![,]>()?;
+            if input.is_empty() {
+                break;
+            }
+
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
 
             match key.to_string().as_str() {
                 "compress" => {
-                    let value = input.parse()?;
-                    maybe_should_compress = Some(value);
+                    set_once(&mut maybe_should_compress, input.parse()?, &key)?;
                 }
                 "ignore_paths" => {
-                    let value = input.parse()?;
-                    maybe_ignore_paths = Some(value);
+                    set_once(&mut maybe_ignore_paths, input.parse()?, &key)?;
                 }
                 "strip_html_ext" => {
-                    let value = input.parse()?;
-                    maybe_should_strip_html_ext = Some(value);
+                    set_once(&mut maybe_should_strip_html_ext, input.parse()?, &key)?;
                 }
                 "cache_busted_paths" => {
-                    let value = input.parse()?;
-                    maybe_cache_busted_paths = Some(value);
+                    set_once(&mut maybe_cache_busted_paths, input.parse()?, &key)?;
                 }
                 "allow_unknown_extensions" => {
-                    let value = input.parse()?;
-                    maybe_allow_unknown_extensions = Some(value);
+                    set_once(&mut maybe_allow_unknown_extensions, input.parse()?, &key)?;
+                }
+                "utf8_charset" => {
+                    set_once(&mut maybe_utf8_charset, input.parse()?, &key)?;
+                }
+                "csp_header" => {
+                    set_once(&mut maybe_csp_header, input.parse()?, &key)?;
                 }
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, or `allow_unknown_extensions`",
+                        "Unknown key in embed_assets! macro. Expected `compress`, `ignore_paths`, `strip_html_ext`, `cache_busted_paths`, `allow_unknown_extensions`, `utf8_charset`, or `csp_header`",
                     ));
                 }
             }
@@ -263,6 +329,14 @@ impl Parse for EmbedAssets {
             value: false,
             span: Span::call_site(),
         });
+        let utf8_charset = maybe_utf8_charset.unwrap_or(LitBool {
+            value: true,
+            span: Span::call_site(),
+        });
+        let csp_header = maybe_csp_header.unwrap_or(LitBool {
+            value: false,
+            span: Span::call_site(),
+        });
 
         Ok(Self {
             assets_dir,
@@ -271,27 +345,15 @@ impl Parse for EmbedAssets {
             should_strip_html_ext,
             cache_busted_paths,
             allow_unknown_extensions,
+            utf8_charset,
+            csp_header,
         })
     }
 }
 
 impl ToTokens for EmbedAssets {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let AssetsDir(assets_dir) = &self.assets_dir;
-        let ignore_paths = &self.validated_ignore_paths;
-        let ShouldCompress(should_compress) = &self.should_compress;
-        let ShouldStripHtmlExt(should_strip_html_ext) = &self.should_strip_html_ext;
-        let cache_busted_paths = &self.cache_busted_paths;
-        let allow_unknown_extensions = &self.allow_unknown_extensions;
-
-        let result = generate_static_routes(
-            assets_dir,
-            ignore_paths,
-            should_compress,
-            should_strip_html_ext,
-            cache_busted_paths,
-            allow_unknown_extensions.value,
-        );
+        let result = generate_static_routes(self);
 
         match result {
             Ok(value) => {
@@ -299,8 +361,8 @@ impl ToTokens for EmbedAssets {
                     #value
                 });
             }
-            Err(err_message) => {
-                let error = syn::Error::new(Span::call_site(), err_message);
+            Err(err) => {
+                let error = syn::Error::new(Span::call_site(), DisplayFullError(&err));
                 tokens.extend(error.to_compile_error());
             }
         }
@@ -314,13 +376,16 @@ impl Parse for AssetsDir {
         let input_span = input.span();
         let assets_dir: LitStr = input.parse()?;
         let literal = assets_dir.value();
-        let path = Path::new(&literal);
-        let metadata = match fs::metadata(path) {
+        let path = resolve_path(&literal);
+        let metadata = match fs::metadata(&path) {
             Ok(meta) => meta,
             Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
                 return Err(syn::Error::new(
                     input_span,
-                    "The specified assets directory does not exist",
+                    format!(
+                        "The specified assets directory ({}) does not exist. Relative paths start at the directory of Cargo.toml.",
+                        path.display()
+                    ),
                 ));
             }
             Err(e) => {
@@ -357,34 +422,45 @@ impl Parse for IgnorePathsWithSpan {
     }
 }
 
+/// Check that the entries of a path list exist, without following a final
+/// symlink so that a dangling link can be ignored
+fn validate_paths(
+    paths: Vec<(PathBuf, Span)>,
+    assets_dir: &LitStr,
+    not_found_message: &str,
+) -> syn::Result<Vec<PathBuf>> {
+    let assets_dir = resolve_path(&assets_dir.value());
+    paths
+        .into_iter()
+        .map(
+            |(path, span)| match fs::symlink_metadata(assets_dir.join(&path)) {
+                Ok(_) => Ok(path),
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
+                    Err(syn::Error::new(span, not_found_message))
+                }
+                Err(e) => Err(syn::Error::new(
+                    span,
+                    format!(
+                        "Error reading path {}: {}",
+                        path.to_string_lossy(),
+                        DisplayFullError(&e)
+                    ),
+                )),
+            },
+        )
+        .collect()
+}
+
 fn validate_ignore_paths(
     ignore_paths: IgnorePathsWithSpan,
     assets_dir: &LitStr,
 ) -> syn::Result<IgnorePaths> {
-    let mut valid_ignore_paths = Vec::new();
-    for (dir, span) in ignore_paths.0 {
-        let full_path = PathBuf::from(assets_dir.value()).join(&dir);
-        match fs::metadata(&full_path) {
-            Ok(_) => valid_ignore_paths.push(full_path),
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
-                return Err(syn::Error::new(
-                    span,
-                    "The specified ignored path does not exist",
-                ));
-            }
-            Err(e) => {
-                return Err(syn::Error::new(
-                    span,
-                    format!(
-                        "Error reading ignored path {}: {}",
-                        dir.to_string_lossy(),
-                        DisplayFullError(&e)
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(IgnorePaths(valid_ignore_paths))
+    validate_paths(
+        ignore_paths.0,
+        assets_dir,
+        "The specified ignored path does not exist",
+    )
+    .map(IgnorePaths)
 }
 
 struct ShouldCompress(LitBool);
@@ -414,10 +490,7 @@ impl Parse for IsCacheBusted {
     }
 }
 
-struct CacheBustedPaths {
-    dirs: Vec<PathBuf>,
-    files: Vec<PathBuf>,
-}
+struct CacheBustedPaths(Vec<PathBuf>);
 struct CacheBustedPathsWithSpan(Vec<(PathBuf, Span)>);
 
 impl Parse for CacheBustedPathsWithSpan {
@@ -431,40 +504,12 @@ fn validate_cache_busted_paths(
     tuples: CacheBustedPathsWithSpan,
     assets_dir: &LitStr,
 ) -> syn::Result<CacheBustedPaths> {
-    let mut valid_dirs = Vec::new();
-    let mut valid_files = Vec::new();
-    for (dir, span) in tuples.0 {
-        let full_path = PathBuf::from(assets_dir.value()).join(&dir);
-        match fs::metadata(&full_path) {
-            Ok(meta) => {
-                if meta.is_dir() {
-                    valid_dirs.push(full_path);
-                } else {
-                    valid_files.push(full_path);
-                }
-            }
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound) => {
-                return Err(syn::Error::new(
-                    span,
-                    "The specified directory for cache busting does not exist",
-                ));
-            }
-            Err(e) => {
-                return Err(syn::Error::new(
-                    span,
-                    format!(
-                        "Error reading path {}: {}",
-                        dir.to_string_lossy(),
-                        DisplayFullError(&e)
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(CacheBustedPaths {
-        dirs: valid_dirs,
-        files: valid_files,
-    })
+    validate_paths(
+        tuples.0,
+        assets_dir,
+        "The specified path for cache busting does not exist",
+    )
+    .map(CacheBustedPaths)
 }
 
 /// Helper function for turning an array of strs representing paths into
@@ -487,141 +532,158 @@ fn parse_dirs(input: ParseStream) -> syn::Result<Vec<(PathBuf, Span)>> {
     Ok(dirs)
 }
 
-#[expect(clippy::too_many_lines)]
-fn generate_static_routes(
-    assets_dir: &LitStr,
-    ignore_paths: &IgnorePaths,
-    should_compress: &LitBool,
-    should_strip_html_ext: &LitBool,
-    cache_busted_paths: &CacheBustedPaths,
-    allow_unknown_extensions: bool,
-) -> Result<TokenStream, error::Error> {
-    let assets_dir_abs = Path::new(&assets_dir.value())
+fn generate_static_routes(embed_assets: &EmbedAssets) -> Result<TokenStream, error::Error> {
+    let EmbedAssets {
+        assets_dir: AssetsDir(assets_dir),
+        validated_ignore_paths: ignore_paths,
+        should_compress: ShouldCompress(should_compress),
+        should_strip_html_ext: ShouldStripHtmlExt(should_strip_html_ext),
+        cache_busted_paths,
+        allow_unknown_extensions,
+        utf8_charset,
+        csp_header,
+    } = embed_assets;
+    let assets_dir_abs = resolve_path(&assets_dir.value())
         .canonicalize()
         .map_err(|error| Error::CannotCanonicalizeDirectory {
             dir: assets_dir.value(),
             error,
         })?;
-    let assets_dir_abs_str = assets_dir_abs
-        .to_str()
-        .ok_or_else(|| Error::InvalidUnicodeInDirectoryName(assets_dir_abs.clone()))?;
-    let canon_ignore_paths = ignore_paths
-        .0
-        .iter()
-        .map(|d| {
-            d.canonicalize()
-                .map_err(|error| Error::CannotCanonicalizeIgnorePath {
-                    path: d.clone(),
-                    error,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let canon_cache_busted_dirs = cache_busted_paths
-        .dirs
-        .iter()
-        .map(|d| {
-            d.canonicalize()
-                .map_err(|error| Error::CannotCanonicalizeCacheBustedDir {
-                    dir: d.clone(),
-                    error,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let canon_cache_busted_files = cache_busted_paths
-        .files
-        .iter()
-        .map(|file| {
-            file.canonicalize()
-                .map_err(|error| Error::CannotCanonicalizeFile {
-                    entry: file.clone(),
-                    error,
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let option_paths = |paths: &[PathBuf]| {
+        paths
+            .iter()
+            .map(|path| path_inside_assets_dir(&assets_dir_abs, path))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let ignore_paths = option_paths(&ignore_paths.0)?;
+    let cache_busted_paths = option_paths(&cache_busted_paths.0)?;
+
+    let mut entries = Vec::new();
+    collect_files(&assets_dir_abs, &ignore_paths, &mut entries)?;
 
     let mut routes = Vec::new();
     let mut seen_web_paths = HashMap::new();
-    for entry in glob(&format!("{assets_dir_abs_str}/**/*")).map_err(Error::Pattern)? {
-        let entry = entry.map_err(Error::Glob)?;
-        let metadata = entry.metadata().map_err(|error| Error::CannotGetMetadata {
-            entry: entry.clone(),
-            error,
-        })?;
-        if metadata.is_dir() {
-            continue;
-        }
-
-        // Skip `entry`s which are located in ignored paths
-        if canon_ignore_paths
+    for entry in entries {
+        let is_entry_cache_busted = cache_busted_paths
             .iter()
-            .any(|ignore_path| entry.starts_with(ignore_path))
-        {
-            continue;
-        }
+            .any(|path| entry.starts_with(path));
 
-        let mut is_entry_cache_busted = false;
-        if canon_cache_busted_dirs
-            .iter()
-            .any(|dir| entry.starts_with(dir))
-            || canon_cache_busted_files.contains(&entry)
-        {
-            is_entry_cache_busted = true;
-        }
-
-        let entry = entry
-            .canonicalize()
-            .map_err(|error| Error::CannotCanonicalizeFile { entry, error })?;
         let entry_str = entry
             .to_str()
             .ok_or_else(|| Error::FilePathIsNotUtf8(entry.clone()))?;
         let EmbeddedFileInfo {
             entry_path,
             content_type,
-            etag_str,
-            lit_byte_str_contents,
+            body,
             maybe_gzip,
             maybe_zstd,
-            cache_busted,
+            content_security_policy,
         } = EmbeddedFileInfo::from_path(
             &entry,
-            Some(assets_dir_abs_str),
+            Some(&assets_dir_abs),
             should_compress,
             should_strip_html_ext,
-            is_entry_cache_busted,
-            allow_unknown_extensions,
+            allow_unknown_extensions.value,
+            utf8_charset.value,
+            csp_header.value,
         )?;
 
+        let mut web_paths = Vec::new();
         if let Some(web_path) = &entry_path {
-            check_duplicate_web_path(&mut seen_web_paths, web_path, entry_str)?;
+            check_route_syntax(web_path, entry_str)?;
+
+            let encoded = encode_web_path(web_path, false);
+            check_duplicate_web_path(&mut seen_web_paths, &encoded, entry_str)?;
+            let lowercase_encoded = encode_web_path(web_path, true);
+            web_paths.push(encoded);
+            if !web_paths.contains(&lowercase_encoded) {
+                web_paths.push(lowercase_encoded);
+            }
         }
 
+        let asset = embedded_asset(
+            &content_type,
+            &body,
+            &maybe_gzip,
+            &maybe_zstd,
+            &content_security_policy,
+            is_entry_cache_busted,
+        );
         routes.push(quote! {
-            router = ::static_serve::static_route(
-                router,
-                #entry_path,
-                #content_type,
-                #etag_str,
-                {
-                    // Poor man's `tracked_path`
-                    // https://github.com/rust-lang/rust/issues/99515
-                    const _: &[u8] = include_bytes!(#entry_str);
-                        #lit_byte_str_contents
-                },
-                #maybe_gzip,
-                #maybe_zstd,
-                #cache_busted
-            );
+            router = ::static_serve::static_route(router, &[#(#web_paths),*], #asset);
         });
     }
 
     Ok(quote! {
-    pub fn static_router<S>() -> ::axum::Router<S>
-        where S: ::std::clone::Clone + ::std::marker::Send + ::std::marker::Sync + 'static {
-            let mut router = ::axum::Router::<S>::new();
+        {
+            #[allow(unused_mut)]
+            let mut router = ::axum::Router::new();
             #(#routes)*
             router
         }
     })
+}
+
+/// Turn an entry of a path list into an absolute path below the assets directory
+///
+/// `.` and `..` are resolved lexically because entries are compared to the
+/// paths of the directory walk, which keep the names of symlinks.
+fn path_inside_assets_dir(assets_dir_abs: &Path, path: &Path) -> Result<PathBuf, Error> {
+    let mut normalized = PathBuf::new();
+    for component in assets_dir_abs.join(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component),
+        }
+    }
+
+    if normalized.starts_with(assets_dir_abs) {
+        Ok(normalized)
+    } else {
+        Err(Error::PathOutsideAssetsDir(path.to_path_buf()))
+    }
+}
+
+/// Recursively collect the files of `dir` in a deterministic order, following
+/// symlinks and skipping `ignore_paths` without looking inside of them
+fn collect_files(
+    dir: &Path,
+    ignore_paths: &[PathBuf],
+    files: &mut Vec<PathBuf>,
+) -> Result<(), Error> {
+    let read_dir_error = |error| Error::CannotReadDirectory {
+        dir: dir.to_path_buf(),
+        error,
+    };
+    let mut entries = fs::read_dir(dir)
+        .map_err(read_dir_error)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<io::Result<Vec<_>>>()
+        .map_err(read_dir_error)?;
+    entries.sort();
+
+    for entry in entries {
+        if ignore_paths.iter().any(|path| entry.starts_with(path)) {
+            continue;
+        }
+
+        let metadata = fs::metadata(&entry).map_err(|error| Error::CannotGetMetadata {
+            entry: entry.clone(),
+            error,
+        })?;
+        if metadata.is_dir() {
+            collect_files(&entry, ignore_paths, files)?;
+        } else if metadata.is_file() {
+            files.push(entry);
+        } else {
+            return Err(Error::NotARegularFile(entry));
+        }
+    }
+
+    Ok(())
 }
 
 /// Record the web path claimed by `entry_str`, erroring if another file
@@ -650,25 +712,22 @@ fn generate_static_handler(
     should_compress: &LitBool,
     cache_busted: &LitBool,
     allow_unknown_extensions: &LitBool,
+    utf8_charset: bool,
+    csp_header: bool,
 ) -> Result<TokenStream, error::Error> {
-    let asset_file_abs = Path::new(&asset_file.value())
+    let asset_file_abs = resolve_path(&asset_file.value())
         .canonicalize()
         .map_err(|error| Error::CannotCanonicalizeFile {
-            entry: Path::new(&asset_file.value()).to_path_buf(),
+            entry: resolve_path(&asset_file.value()),
             error,
         })?;
-    let asset_file_abs_str = asset_file_abs
-        .to_str()
-        .ok_or_else(|| Error::FilePathIsNotUtf8(asset_file_abs.clone()))?;
-
     let EmbeddedFileInfo {
         entry_path: _,
         content_type,
-        etag_str,
-        lit_byte_str_contents,
+        body,
         maybe_gzip,
         maybe_zstd,
-        cache_busted,
+        content_security_policy,
     } = EmbeddedFileInfo::from_path(
         &asset_file_abs,
         None,
@@ -677,34 +736,58 @@ fn generate_static_handler(
             value: false,
             span: Span::call_site(),
         },
-        cache_busted.value(),
         allow_unknown_extensions.value(),
+        utf8_charset,
+        csp_header,
     )?;
 
+    let asset = embedded_asset(
+        &content_type,
+        &body,
+        &maybe_gzip,
+        &maybe_zstd,
+        &content_security_policy,
+        cache_busted.value,
+    );
     let route = quote! {
-        ::static_serve::static_method_router(
-            #content_type,
-            #etag_str,
-            {
-                // Poor man's `tracked_path`
-                // https://github.com/rust-lang/rust/issues/99515
-                const _: &[u8] = include_bytes!(#asset_file_abs_str);
-                #lit_byte_str_contents
-            },
-            #maybe_gzip,
-            #maybe_zstd,
-            #cache_busted
-        )
+        ::static_serve::static_method_router(#asset)
     };
 
     Ok(route)
 }
 
-struct OptionBytesSlice(Option<LitByteStr>);
-impl ToTokens for OptionBytesSlice {
+/// Build the `EmbeddedAsset` given to the runtime
+fn embedded_asset(
+    content_type: &str,
+    body: &TokenStream,
+    maybe_gzip: &OptionCompressedBody,
+    maybe_zstd: &OptionCompressedBody,
+    content_security_policy: &OptionStr,
+    cache_busted: bool,
+) -> TokenStream {
+    quote! {
+        ::static_serve::EmbeddedAsset {
+            content_type: #content_type,
+            body: #body,
+            body_gz: #maybe_gzip,
+            body_zst: #maybe_zstd,
+            content_security_policy: #content_security_policy,
+            cache_busted: #cache_busted,
+        }
+    }
+}
+
+/// A compressed body, if worth serving, and the `ETag` of its bytes
+struct OptionCompressedBody(Option<(LitByteStr, String)>);
+impl ToTokens for OptionCompressedBody {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(if let Some(inner) = &self.0.as_ref() {
-            quote! { ::std::option::Option::Some(#inner) }
+        tokens.extend(if let Some((body, etag)) = &self.0 {
+            quote! {
+                ::std::option::Option::Some(::static_serve::EmbeddedBody {
+                    bytes: #body,
+                    etag: #etag,
+                })
+            }
         } else {
             quote! { ::std::option::Option::None }
         });
@@ -717,26 +800,48 @@ struct EmbeddedFileInfo {
     /// the router is responsible for the file's path on the server.
     entry_path: Option<String>,
     content_type: String,
-    etag_str: String,
-    lit_byte_str_contents: LitByteStr,
-    maybe_gzip: OptionBytesSlice,
-    maybe_zstd: OptionBytesSlice,
-    cache_busted: bool,
+    body: TokenStream,
+    maybe_gzip: OptionCompressedBody,
+    maybe_zstd: OptionCompressedBody,
+    /// The `Content-Security-Policy` header declared by an HTML document
+    content_security_policy: OptionStr,
+}
+
+/// An optional `&'static str`
+struct OptionStr(Option<String>);
+impl ToTokens for OptionStr {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(if let Some(value) = &self.0 {
+            quote! { ::std::option::Option::Some(#value) }
+        } else {
+            quote! { ::std::option::Option::None }
+        });
+    }
 }
 
 impl EmbeddedFileInfo {
     fn from_path(
-        pathbuf: &PathBuf,
-        assets_dir_abs_str: Option<&str>,
+        pathbuf: &Path,
+        assets_dir_abs: Option<&Path>,
         should_compress: &LitBool,
         should_strip_html_ext: &LitBool,
-        cache_busted: bool,
         allow_unknown_extensions: bool,
+        utf8_charset: bool,
+        csp_header: bool,
     ) -> Result<Self, Error> {
         let contents = fs::read(pathbuf).map_err(|error| Error::CannotReadEntryContents {
-            entry: pathbuf.clone(),
+            entry: pathbuf.to_path_buf(),
             error,
         })?;
+        // Checked first since compressing is by far the slowest step
+        let content_type = file_content_type(pathbuf, allow_unknown_extensions)?;
+
+        let path_str = pathbuf
+            .to_str()
+            .ok_or_else(|| Error::FilePathIsNotUtf8(pathbuf.to_path_buf()))?;
+        // `include_bytes!` also tracks the file, and is much cheaper than
+        // passing the bytes through the token stream
+        let body = quote! { ::core::include_bytes!(#path_str) };
 
         // Optionally compress files
         let (maybe_gzip, maybe_zstd) = if should_compress.value {
@@ -747,14 +852,13 @@ impl EmbeddedFileInfo {
             (None, None)
         };
 
-        let content_type = file_content_type(pathbuf, allow_unknown_extensions)?;
-
         // entry_path is only needed for the router (embed_assets!)
-        let entry_path = if let Some(dir) = assets_dir_abs_str {
-            let relative_entry = pathdiff::diff_paths(pathbuf, dir)
-                .ok_or_else(|| Error::CannotMakeFileRelative(pathbuf.clone()))?;
-            let mut web_path = normalize_web_path(&relative_entry);
-            if should_strip_html_ext.value && content_type == "text/html" {
+        let entry_path = if let Some(dir) = assets_dir_abs {
+            let relative_entry = pathbuf
+                .strip_prefix(dir)
+                .map_err(|_| Error::CannotMakeFileRelative(pathbuf.to_path_buf()))?;
+            let mut web_path = normalize_web_path(relative_entry);
+            if should_strip_html_ext.value && content_type == mime::TEXT_HTML {
                 strip_html_ext(&mut web_path);
             }
 
@@ -763,24 +867,45 @@ impl EmbeddedFileInfo {
             None
         };
 
+        let content_security_policy = if csp_header && content_type == mime::TEXT_HTML {
+            csp::meta_policies(&contents).map_err(|error| Error::ContentSecurityPolicy {
+                entry: pathbuf.to_path_buf(),
+                error,
+            })?
+        } else {
+            None
+        };
+
+        let content_type =
+            if utf8_charset && takes_charset(&content_type) && str::from_utf8(&contents).is_ok() {
+                with_utf8_charset(&content_type)
+            } else {
+                content_type
+            };
+        let content_type = content_type.to_string();
+
         let etag_str = etag(&contents);
-        let lit_byte_str_contents = LitByteStr::new(&contents, Span::call_site());
-        let maybe_gzip = OptionBytesSlice(maybe_gzip);
-        let maybe_zstd = OptionBytesSlice(maybe_zstd);
+        let body = quote! {
+            ::static_serve::EmbeddedBody {
+                bytes: #body,
+                etag: #etag_str,
+            }
+        };
+        let maybe_gzip = OptionCompressedBody(maybe_gzip);
+        let maybe_zstd = OptionCompressedBody(maybe_zstd);
 
         Ok(Self {
             entry_path,
             content_type,
-            etag_str,
-            lit_byte_str_contents,
+            body,
             maybe_gzip,
             maybe_zstd,
-            cache_busted,
+            content_security_policy: OptionStr(content_security_policy),
         })
     }
 }
 
-fn gzip_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Error> {
+fn gzip_compress(contents: &[u8], entry: &Path) -> Result<Option<(LitByteStr, String)>, Error> {
     let mut compressor = GzEncoder::new(Vec::new(), flate2::Compression::best());
     compressor.write_all(contents).map_err(|e| Error::Gzip {
         entry: entry.to_path_buf(),
@@ -794,7 +919,7 @@ fn gzip_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Er
     Ok(maybe_get_compressed(&compressed, contents))
 }
 
-fn zstd_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Error> {
+fn zstd_compress(contents: &[u8], entry: &Path) -> Result<Option<(LitByteStr, String)>, Error> {
     let level = *zstd::compression_level_range().end();
     let mut encoder = zstd::Encoder::new(Vec::new(), level).unwrap();
     write_to_zstd_encoder(&mut encoder, contents).map_err(|e| Error::Zstd {
@@ -810,6 +935,9 @@ fn zstd_compress(contents: &[u8], entry: &Path) -> Result<Option<LitByteStr>, Er
     Ok(maybe_get_compressed(&compressed, contents))
 }
 
+/// RFC 9659 limits the zstd content coding to a window of 8 MiB
+const MAX_ZSTD_WINDOW_LOG: u32 = 23;
+
 fn write_to_zstd_encoder(
     encoder: &mut zstd::Encoder<'static, Vec<u8>>,
     contents: &[u8],
@@ -820,7 +948,7 @@ fn write_to_zstd_encoder(
             .try_into()
             .expect("contents size should fit into u64"),
     ))?;
-    encoder.window_log(23)?;
+    encoder.window_log(MAX_ZSTD_WINDOW_LOG)?;
     encoder.include_checksum(false)?;
     encoder.include_contentsize(false)?;
     encoder.long_distance_matching(false)?;
@@ -834,9 +962,36 @@ fn is_compression_significant(compressed_len: usize, contents_len: usize) -> boo
     compressed_len * 10 < contents_len * 9
 }
 
-fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<LitByteStr> {
-    is_compression_significant(compressed.len(), contents.len())
-        .then(|| LitByteStr::new(compressed, Span::call_site()))
+fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<(LitByteStr, String)> {
+    is_compression_significant(compressed.len(), contents.len()).then(|| {
+        (
+            LitByteStr::new(compressed, Span::call_site()),
+            etag(compressed),
+        )
+    })
+}
+
+/// Check if a media type benefits from a `charset` parameter
+///
+/// Without one browsers guess the encoding of most text, and `text/markdown`
+/// requires it. These don't need it: `text/javascript` and `text/calendar`
+/// default to UTF-8, `text/vtt` is always UTF-8 and has no such parameter, and
+/// XML declares its own encoding, which being valid UTF-8 can't rule out.
+fn takes_charset(media_type: &Mime) -> bool {
+    let subtype = media_type.subtype();
+    media_type.type_() == mime::TEXT
+        && media_type.get_param(mime::CHARSET).is_none()
+        && subtype != mime::JAVASCRIPT
+        && subtype != "calendar"
+        && subtype != "vtt"
+        && subtype != mime::XML
+}
+
+/// Add `charset=utf-8` to a media type, keeping its other parameters
+fn with_utf8_charset(media_type: &Mime) -> Mime {
+    format!("{media_type}; {}={}", mime::CHARSET, mime::UTF_8)
+        .parse()
+        .expect("adding a parameter to a valid media type should keep it valid")
 }
 
 /// Use `mime_guess` to get the best guess of the file's MIME type
@@ -846,30 +1001,28 @@ fn maybe_get_compressed(compressed: &[u8], contents: &[u8]) -> Option<LitByteStr
 /// will not produce an error, but application/octet-stream.
 ///
 /// We accept the first guess because [`mime_guess` updates the order
-/// according to the latest IETF RTC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
-fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<String, error::Error> {
+/// according to the latest IETF RFC](https://docs.rs/mime_guess/2.0.5/mime_guess/struct.MimeGuess.html#note-ordering)
+fn file_content_type(path: &Path, allow_unknown_extensions: bool) -> Result<Mime, error::Error> {
     let Some(ext) = path.extension() else {
         return if allow_unknown_extensions {
-            Ok(mime_guess::mime::APPLICATION_OCTET_STREAM.to_string())
+            Ok(mime::APPLICATION_OCTET_STREAM)
         } else {
-            Err(error::Error::UnknownFileExtension(None))
+            Err(Error::MissingFileExtension(path.to_path_buf()))
         };
     };
 
-    let ext = ext
-        .to_str()
-        .ok_or(error::Error::InvalidFileExtension(path.into()))?;
-
-    let guess = mime_guess::MimeGuess::from_ext(ext);
+    let guess = ext.to_str().map_or(
+        mime_guess::MimeGuess::from_ext(""),
+        mime_guess::MimeGuess::from_ext,
+    );
 
     if allow_unknown_extensions {
-        return Ok(guess.first_or_octet_stream().to_string());
+        return Ok(guess.first_or_octet_stream());
     }
 
     guess
-        .first_raw()
-        .map(ToOwned::to_owned)
-        .ok_or(error::Error::UnknownFileExtension(Some(ext.into())))
+        .first()
+        .ok_or_else(|| Error::UnknownFileExtension(path.to_path_buf()))
 }
 
 fn etag(contents: &[u8]) -> String {
@@ -890,12 +1043,54 @@ fn normalize_web_path(relative_path: &Path) -> String {
     let normalized = relative_path
         .components()
         .filter_map(|component| match component {
-            std::path::Component::Normal(segment) => segment.to_str(),
+            Component::Normal(segment) => segment.to_str(),
             _ => None,
         })
         .collect::<Vec<_>>()
         .join("/");
     format!("/{normalized}")
+}
+
+/// Reject path segments that axum refuses as routes, which would otherwise
+/// panic when the `Router` is built
+fn check_route_syntax(web_path: &str, entry_str: &str) -> Result<(), Error> {
+    if web_path
+        .split('/')
+        .any(|segment| segment.starts_with([':', '*']))
+    {
+        return Err(Error::UnsupportedRouteSegment {
+            web_path: web_path.to_owned(),
+            file: entry_str.to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Percent-encode a web path into the form requested by HTTP clients
+///
+/// axum matches routes against the undecoded request path, and treats braces
+/// as captures, so a file's name must be encoded to be reachable. Clients
+/// differ in the case of hex digits, so both spellings are registered. `[`,
+/// `]` and `|` stay as they are since URL parsers don't encode them either.
+fn encode_web_path(web_path: &str, lowercase_hex: bool) -> String {
+    let hex = if lowercase_hex {
+        b"0123456789abcdef"
+    } else {
+        b"0123456789ABCDEF"
+    };
+
+    let mut encoded = String::with_capacity(web_path.len());
+    for byte in web_path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@[]|".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(hex[usize::from(byte >> 4)]));
+            encoded.push(char::from(hex[usize::from(byte & 0xf)]));
+        }
+    }
+    encoded
 }
 
 /// Strip `.html`/`.htm` from an already-normalized web path in-place,
@@ -910,14 +1105,117 @@ fn strip_html_ext(path: &mut String) {
 
     if path.ends_with("/index") {
         path.truncate(path.len() - "index".len());
-    } else if path == "/index" {
-        path.truncate(1);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_compression_significant;
+    use proc_macro2::{TokenStream, TokenTree};
+    use quote::{ToTokens, quote};
+    use syn::LitStr;
+
+    use super::{EmbedAssets, is_compression_significant};
+
+    /// Expand `embed_assets!` and return the message of the error that fails
+    /// the build, if any
+    ///
+    /// Unlike a `compile_fail` doctest, this tells which error the expansion
+    /// fails with.
+    fn embed_assets_error(input: TokenStream) -> Option<String> {
+        let expanded = match syn::parse2::<EmbedAssets>(input) {
+            Ok(embed_assets) => embed_assets.into_token_stream(),
+            Err(error) => error.to_compile_error(),
+        };
+
+        let mut tokens = expanded.into_iter();
+        tokens
+            .find(|token| matches!(token, TokenTree::Ident(ident) if ident == "compile_error"))?;
+        tokens.find_map(|token| match token {
+            TokenTree::Group(group) => syn::parse2::<LitStr>(group.stream())
+                .ok()
+                .map(|message| message.value()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn duplicate_web_paths_fail_the_build() {
+        // Registering a path twice would panic when the `Router` is built
+        assert_eq!(
+            embed_assets_error(quote!("../test_fixtures/collision")),
+            None
+        );
+        let error = embed_assets_error(quote!("../test_fixtures/collision", strip_html_ext = true))
+            .unwrap();
+        assert!(
+            error.starts_with("Multiple files map to the same web path /foo"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn unknown_extensions_fail_the_build() {
+        // The fixture holds `example.wtf` and the extensionless `.DS_STORE`
+        let error = embed_assets_error(quote!("../test_fixtures/unknown_extensions")).unwrap();
+        assert!(error.starts_with("Missing file extension"), "{error}");
+        let error = embed_assets_error(quote!(
+            "../test_fixtures/unknown_extensions",
+            ignore_paths = [".DS_STORE"]
+        ))
+        .unwrap();
+        assert!(error.starts_with("Unknown file extension"), "{error}");
+        assert_eq!(
+            embed_assets_error(quote!(
+                "../test_fixtures/unknown_extensions",
+                allow_unknown_extensions = true
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn unsupported_route_segments_fail_the_build() {
+        // axum would refuse the route and panic when the `Router` is built
+        let error = embed_assets_error(quote!("../test_fixtures/route_syntax")).unwrap();
+        assert!(error.contains("can't be a route"), "{error}");
+        assert_eq!(
+            embed_assets_error(quote!(
+                "../test_fixtures/route_syntax",
+                ignore_paths = [":colon.txt"]
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn repeated_options_fail_the_build() {
+        let error = embed_assets_error(quote!(
+            "../test_fixtures/assets/small",
+            compress = true,
+            compress = false
+        ))
+        .unwrap();
+        assert_eq!(error, "Duplicate key `compress` in macro options");
+        assert_eq!(
+            embed_assets_error(quote!("../test_fixtures/assets/small", compress = true,)),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_csp_fails_the_build() {
+        let error =
+            embed_assets_error(quote!("../test_fixtures/csp_invalid", csp_header = true)).unwrap();
+        assert!(
+            error.starts_with("Cannot move the Content Security Policy of")
+                && error.ends_with("The policy contains a comma, which would split it into separate policies in a header"),
+            "{error}"
+        );
+        assert_eq!(
+            embed_assets_error(quote!("../test_fixtures/csp_invalid")),
+            None
+        );
+    }
 
     #[test]
     fn compression_significance_threshold() {
