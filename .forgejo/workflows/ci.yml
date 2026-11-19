@@ -96,6 +96,9 @@ jobs:
       - name: cargo test (--features axum)
         run: cargo test --locked --features axum
 
+      - name: cargo test (--all-features)
+        run: cargo test --locked --all-features
+
   msrv:
     # The minimum supported Rust version (Cargo.toml rust-version).
     if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
@@ -129,6 +132,9 @@ jobs:
 
       - name: cargo test (--features axum)
         run: cargo test --locked --features axum
+
+      - name: cargo test (--all-features)
+        run: cargo test --locked --all-features
 
   cargo-hack:
     if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
