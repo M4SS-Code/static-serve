@@ -34,6 +34,8 @@ pub enum ParseHttpRangeOrContentRangeError {
     InvalidRangePiece(#[source] InvalidHttpU64),
     #[error("Invalid size value")]
     InvalidSize(#[source] InvalidHttpU64),
+    #[error("Too many ranges")]
+    TooManyRanges,
 }
 
 #[cfg(feature = "axum")]

@@ -1,6 +1,7 @@
 # Range requests
 
-Various utilities to deal with `Range Requests` that have a __single__ range.
+Various utilities to deal with `Range Requests`, including requests for
+multiple ranges, which are served when they coalesce into a single one.
 
 ## License
 

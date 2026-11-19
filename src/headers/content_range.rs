@@ -8,10 +8,11 @@ use http::HeaderValue;
 
 use crate::headers::{
     InvalidHttpU64, InvalidOrderedRange, OrderedRange, ParseHttpRangeOrContentRangeError, UNIT,
-    range::HttpRange, u64_unprefixed_parse,
+    range::{HttpRange, RangeSpec},
+    u64_unprefixed_parse,
 };
 
-/// A typed HTTP `Content-Range` header that only supports a __single__ range.
+/// A typed HTTP `Content-Range` header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpContentRange {
     Bound(Bound),
@@ -21,38 +22,55 @@ pub enum HttpContentRange {
 impl HttpContentRange {
     /// Checks whether this `Content-Range` matches the expected [`HttpRange`].
     ///
+    /// A [`Bound`] matches if it is a valid response to at least one of the
+    /// requested `range-spec`s. Keep in mind that a server may coalesce
+    /// several requested ranges into a single one ([RFC 9110 Section
+    /// 15.3.7.2]), which then matches none of them.
+    ///
+    /// An [`Unsatisfiable`] matches if none of the requested `range-spec`s is
+    /// satisfiable for the reported size ([RFC 9110 Section 14.1.2]).
+    ///
     /// [`HttpRange`]: crate::headers::range::HttpRange
-    pub fn matches_requested_range(&self, expected_range: HttpRange) -> bool {
-        match (expected_range, self) {
-            (HttpRange::StartingPoint(start), HttpContentRange::Bound(Bound { range, .. })) => {
-                start == range.start()
-            }
-            (
-                HttpRange::Range(OrderedRange { start, end }),
-                HttpContentRange::Bound(Bound { range, .. }),
-            ) => start == range.start() && end >= range.end(),
-            (HttpRange::Suffix(suffix), HttpContentRange::Bound(Bound { range, size })) => {
-                let length = (range.end() - range.start()).checked_add(1);
-                let length_matches = length.is_some_and(|len| len <= suffix);
-                let ends_at_boundary = size.is_none_or(|size| range.end() + 1 == size);
-                length_matches && ends_at_boundary
-            }
-            // Per RFC 9110 Section 14.1.2 an int-range is satisfiable iff its
-            // first-pos is less than the representation length, so a 416 is
-            // only consistent with the request when the start is at or past
-            // the claimed size.
-            (
-                HttpRange::StartingPoint(n),
-                HttpContentRange::Unsatisfiable(Unsatisfiable { size }),
-            )
-            | (
-                HttpRange::Range(OrderedRange { start: n, .. }),
-                HttpContentRange::Unsatisfiable(Unsatisfiable { size }),
-            ) => n >= *size,
-            (HttpRange::Suffix(suffix), HttpContentRange::Unsatisfiable(Unsatisfiable { .. })) => {
-                suffix == 0
-            }
+    /// [RFC 9110 Section 14.1.2]: https://www.rfc-editor.org/rfc/rfc9110#section-14.1.2
+    /// [RFC 9110 Section 15.3.7.2]: https://www.rfc-editor.org/rfc/rfc9110#section-15.3.7.2
+    pub fn matches_requested_range(&self, expected_range: &HttpRange) -> bool {
+        match self {
+            HttpContentRange::Bound(bound) => expected_range
+                .specs()
+                .iter()
+                .any(|&spec| bound_matches_spec(*bound, spec)),
+            HttpContentRange::Unsatisfiable(Unsatisfiable { size }) => expected_range
+                .specs()
+                .iter()
+                .all(|&spec| !spec_is_satisfiable(spec, *size)),
         }
+    }
+}
+
+fn bound_matches_spec(Bound { range, size }: Bound, spec: RangeSpec) -> bool {
+    match spec {
+        RangeSpec::StartingPoint(start) => start == range.start(),
+        RangeSpec::Range(OrderedRange { start, end }) => {
+            start == range.start() && end >= range.end()
+        }
+        RangeSpec::Suffix(suffix) => {
+            let length = (range.end() - range.start()).checked_add(1);
+            let length_matches = length.is_some_and(|len| len <= suffix);
+            let ends_at_boundary = size.is_none_or(|size| range.end() + 1 == size);
+            length_matches && ends_at_boundary
+        }
+    }
+}
+
+/// Per RFC 9110 Section 14.1.2 an int-range is satisfiable iff its first-pos
+/// is less than the representation length, and a suffix-range iff its
+/// suffix-length is non-zero.
+fn spec_is_satisfiable(spec: RangeSpec, size: u64) -> bool {
+    match spec {
+        RangeSpec::StartingPoint(start) | RangeSpec::Range(OrderedRange { start, .. }) => {
+            start < size
+        }
+        RangeSpec::Suffix(suffix) => suffix > 0,
     }
 }
 

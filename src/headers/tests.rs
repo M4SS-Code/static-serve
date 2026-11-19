@@ -115,145 +115,173 @@ mod content_range {
         use crate::headers::{
             OrderedRange,
             content_range::{Bound, HttpContentRange, Unsatisfiable},
-            range::HttpRange,
+            range::{HttpRange, RangeSpec},
         };
 
         #[test]
         fn successful_range_range_range_content_bound() {
-            let range = HttpRange::Range(OrderedRange::new(10..=20).unwrap());
+            let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(10..=20).unwrap()));
             let content_range = HttpContentRange::Bound(Bound::new(10..=20, Some(50)).unwrap());
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn satisfiable_range_does_not_match_unsatisfiable() {
-            let range = HttpRange::Range(OrderedRange::new(10..=50).unwrap());
+            let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(10..=50).unwrap()));
             let content_range = HttpContentRange::Unsatisfiable(Unsatisfiable::new(20));
 
-            assert!(!content_range.matches_requested_range(range));
+            assert!(!content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn range_start_beyond_size_matches_unsatisfiable() {
-            let range = HttpRange::Range(OrderedRange::new(20..=50).unwrap());
+            let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(20..=50).unwrap()));
             let content_range = HttpContentRange::Unsatisfiable(Unsatisfiable::new(20));
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn successful_range_starting_point_range_content_bound() {
-            let range = HttpRange::StartingPoint(10);
+            let range = HttpRange::from(RangeSpec::StartingPoint(10));
             let content_range = HttpContentRange::Bound(Bound::new(10..=49, Some(50)).unwrap());
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn unsuccessful_range_starting_point_range_content_bound() {
-            let range = HttpRange::StartingPoint(21);
+            let range = HttpRange::from(RangeSpec::StartingPoint(21));
             let content_range = HttpContentRange::Unsatisfiable(Unsatisfiable::new(20));
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn successful_range_suffix_range_content_bound() {
-            let range = HttpRange::Suffix(20);
+            let range = HttpRange::from(RangeSpec::Suffix(20));
             let content_range = HttpContentRange::Bound(Bound::new(0..=19, Some(20)).unwrap());
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn unsuccessful_range_suffix_zero_content_unsatisfiable() {
-            let range = HttpRange::Suffix(0);
+            let range = HttpRange::from(RangeSpec::Suffix(0));
             let content_range = HttpContentRange::Unsatisfiable(Unsatisfiable::new(20));
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn suffix_exceeding_size_is_not_unsatisfiable() {
-            let range = HttpRange::Suffix(50);
+            let range = HttpRange::from(RangeSpec::Suffix(50));
             let content_range = HttpContentRange::Unsatisfiable(Unsatisfiable::new(20));
 
-            assert!(!content_range.matches_requested_range(range));
+            assert!(!content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn range_with_clamped_end_matches() {
-            let range = HttpRange::Range(OrderedRange::new(0..=999).unwrap());
+            let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=999).unwrap()));
             let content_range = HttpContentRange::Bound(Bound::new(0..=49, Some(50)).unwrap());
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn suffix_clamped_to_file_size_matches() {
-            let range = HttpRange::Suffix(999);
+            let range = HttpRange::from(RangeSpec::Suffix(999));
             let content_range = HttpContentRange::Bound(Bound::new(0..=49, Some(50)).unwrap());
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn suffix_not_at_boundary_does_not_match() {
-            let range = HttpRange::Suffix(5);
+            let range = HttpRange::from(RangeSpec::Suffix(5));
             let content_range = HttpContentRange::Bound(Bound::new(0..=4, Some(20)).unwrap());
 
-            assert!(!content_range.matches_requested_range(range));
+            assert!(!content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn suffix_length_mismatch_does_not_match() {
-            let range = HttpRange::Suffix(3);
+            let range = HttpRange::from(RangeSpec::Suffix(3));
             let content_range = HttpContentRange::Bound(Bound::new(10..=19, Some(20)).unwrap());
 
-            assert!(!content_range.matches_requested_range(range));
+            assert!(!content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn range_start_mismatch_does_not_match() {
-            let range = HttpRange::Range(OrderedRange::new(5..=20).unwrap());
+            let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(5..=20).unwrap()));
             let content_range = HttpContentRange::Bound(Bound::new(10..=20, Some(50)).unwrap());
 
-            assert!(!content_range.matches_requested_range(range));
+            assert!(!content_range.matches_requested_range(&range));
         }
 
         #[test]
         fn suffix_with_nonzero_start_matches() {
-            let range = HttpRange::Suffix(5);
+            let range = HttpRange::from(RangeSpec::Suffix(5));
             let content_range = HttpContentRange::Bound(Bound::new(15..=19, Some(20)).unwrap());
 
-            assert!(content_range.matches_requested_range(range));
+            assert!(content_range.matches_requested_range(&range));
+        }
+
+        #[test]
+        fn bound_matches_any_of_multiple_ranges() {
+            let range: HttpRange = "bytes=0-4,10-14".parse().unwrap();
+
+            let first = HttpContentRange::Bound(Bound::new(0..=4, Some(20)).unwrap());
+            assert!(first.matches_requested_range(&range));
+            let second = HttpContentRange::Bound(Bound::new(10..=14, Some(20)).unwrap());
+            assert!(second.matches_requested_range(&range));
+            let neither = HttpContentRange::Bound(Bound::new(5..=9, Some(20)).unwrap());
+            assert!(!neither.matches_requested_range(&range));
+        }
+
+        #[test]
+        fn unsatisfiable_matches_only_if_every_range_is_unsatisfiable() {
+            let content_range = HttpContentRange::Unsatisfiable(Unsatisfiable::new(20));
+
+            let unsatisfiable: HttpRange = "bytes=20-,30-40,-0".parse().unwrap();
+            assert!(content_range.matches_requested_range(&unsatisfiable));
+            let mixed: HttpRange = "bytes=20-,5-6".parse().unwrap();
+            assert!(!content_range.matches_requested_range(&mixed));
         }
     }
 }
 
 #[cfg(test)]
 mod range {
-    use crate::headers::{OrderedRange, ParseHttpRangeOrContentRangeError, range::HttpRange};
+    use crate::headers::{
+        OrderedRange, ParseHttpRangeOrContentRangeError,
+        range::{HttpRange, MAX_RANGE_SET_ELEMENTS, RangeSpec},
+    };
 
     #[test]
     fn successful_starting_parsing() {
         assert_eq!(
             "bytes=50-".parse::<HttpRange>().unwrap(),
-            HttpRange::StartingPoint(50)
+            HttpRange::from(RangeSpec::StartingPoint(50))
         );
     }
 
     #[test]
     fn successful_starting_to_string() {
-        assert_eq!("bytes=50-", &HttpRange::StartingPoint(50).to_string());
+        assert_eq!(
+            "bytes=50-",
+            &HttpRange::from(RangeSpec::StartingPoint(50)).to_string()
+        );
     }
 
     #[test]
     fn successful_range_parsing() {
         assert_eq!(
             "bytes=50-100".parse::<HttpRange>().unwrap(),
-            HttpRange::Range(OrderedRange::new(50..=100).unwrap())
+            HttpRange::from(RangeSpec::Range(OrderedRange::new(50..=100).unwrap()))
         );
     }
 
@@ -261,7 +289,7 @@ mod range {
     fn successful_range_to_string() {
         assert_eq!(
             "bytes=50-100",
-            &HttpRange::Range(OrderedRange::new(50..=100).unwrap()).to_string()
+            &HttpRange::from(RangeSpec::Range(OrderedRange::new(50..=100).unwrap())).to_string()
         );
     }
 
@@ -269,13 +297,16 @@ mod range {
     fn successful_suffix_parsing() {
         assert_eq!(
             "bytes=-100".parse::<HttpRange>().unwrap(),
-            HttpRange::Suffix(100)
+            HttpRange::from(RangeSpec::Suffix(100))
         );
     }
 
     #[test]
     fn successful_suffix_to_string() {
-        assert_eq!("bytes=-100", &HttpRange::Suffix(100).to_string());
+        assert_eq!(
+            "bytes=-100",
+            &HttpRange::from(RangeSpec::Suffix(100)).to_string()
+        );
     }
 
     #[test]
@@ -314,11 +345,11 @@ mod range {
     fn unit_is_case_insensitive() {
         assert_eq!(
             "BYTES=50-".parse::<HttpRange>().unwrap(),
-            HttpRange::StartingPoint(50)
+            HttpRange::from(RangeSpec::StartingPoint(50))
         );
         assert_eq!(
             "Bytes=50-100".parse::<HttpRange>().unwrap(),
-            HttpRange::Range(OrderedRange::new(50..=100).unwrap())
+            HttpRange::from(RangeSpec::Range(OrderedRange::new(50..=100).unwrap()))
         );
     }
 
@@ -352,15 +383,10 @@ mod range {
     }
 
     #[test]
-    fn multi_range_rejected() {
-        assert!("bytes=0-50, 100-150".parse::<HttpRange>().is_err());
-    }
-
-    #[test]
     fn suffix_zero_parsing() {
         assert_eq!(
             "bytes=-0".parse::<HttpRange>().unwrap(),
-            HttpRange::Suffix(0)
+            HttpRange::from(RangeSpec::Suffix(0))
         );
     }
 
@@ -368,7 +394,7 @@ mod range {
     fn starting_point_zero() {
         assert_eq!(
             "bytes=0-".parse::<HttpRange>().unwrap(),
-            HttpRange::StartingPoint(0)
+            HttpRange::from(RangeSpec::StartingPoint(0))
         );
     }
 
@@ -376,7 +402,236 @@ mod range {
     fn range_single_byte() {
         assert_eq!(
             "bytes=0-0".parse::<HttpRange>().unwrap(),
-            HttpRange::Range(OrderedRange::new(0..=0).unwrap())
+            HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=0).unwrap()))
+        );
+    }
+
+    fn specs(s: &str) -> Vec<RangeSpec> {
+        s.parse::<HttpRange>().unwrap().specs().to_vec()
+    }
+
+    fn range(start: u64, end: u64) -> RangeSpec {
+        RangeSpec::Range(OrderedRange::new(start..=end).unwrap())
+    }
+
+    #[test]
+    fn multiple_ranges() {
+        assert_eq!(specs("bytes=0-1,5-6"), [range(0, 1), range(5, 6)]);
+        assert_eq!(specs("bytes=0-0,-1"), [range(0, 0), RangeSpec::Suffix(1)]);
+        assert_eq!(
+            specs("bytes=500-600,601-999"),
+            [range(500, 600), range(601, 999)]
+        );
+    }
+
+    #[test]
+    fn multiple_ranges_keep_request_order_and_duplicates() {
+        assert_eq!(
+            specs("bytes=9-,-3,0-1,0-1"),
+            [
+                RangeSpec::StartingPoint(9),
+                RangeSpec::Suffix(3),
+                range(0, 1),
+                range(0, 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn optional_whitespace_around_commas() {
+        // The example of RFC 9110 Section 14.1.2.
+        assert_eq!(
+            specs("bytes= 0-999, 4500-5499, -1000"),
+            [range(0, 999), range(4500, 5499), RangeSpec::Suffix(1000)]
+        );
+        assert_eq!(specs("bytes=0-1 ,\t5-6"), [range(0, 1), range(5, 6)]);
+        assert_eq!(specs("bytes=0-1\t,  5-6  "), [range(0, 1), range(5, 6)]);
+    }
+
+    #[test]
+    fn empty_list_elements_are_ignored() {
+        assert_eq!(specs("bytes=0-1,,5-6"), [range(0, 1), range(5, 6)]);
+        assert_eq!(specs("bytes=,0-1"), [range(0, 1)]);
+        assert_eq!(specs("bytes=0-1,"), [range(0, 1)]);
+        assert_eq!(specs("bytes= , ,0-1, ,"), [range(0, 1)]);
+    }
+
+    #[test]
+    fn only_empty_list_elements_rejected() {
+        for s in ["bytes=", "bytes=,", "bytes= , ,", "bytes=  "] {
+            assert_eq!(
+                s.parse::<HttpRange>().unwrap_err(),
+                ParseHttpRangeOrContentRangeError::MalformedRange,
+                "{s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn whitespace_inside_range_spec_rejected() {
+        for s in ["bytes=0 -1", "bytes=0- 1", "bytes=- 1", "bytes=0 1-2"] {
+            assert!(s.parse::<HttpRange>().is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn whitespace_around_unit_rejected() {
+        assert_eq!(
+            "bytes =0-1".parse::<HttpRange>().unwrap_err(),
+            ParseHttpRangeOrContentRangeError::InvalidUnit
+        );
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_trimmed() {
+        assert_eq!(specs(" \tbytes=0-1\t "), [range(0, 1)]);
+    }
+
+    #[test]
+    fn non_ows_whitespace_rejected() {
+        assert!("bytes=0-1,\n5-6".parse::<HttpRange>().is_err());
+        assert!("\nbytes=0-1".parse::<HttpRange>().is_err());
+    }
+
+    #[test]
+    fn unit_is_case_insensitive_with_multiple_ranges() {
+        assert_eq!(specs("ByTeS=0-1,5-6"), [range(0, 1), range(5, 6)]);
+    }
+
+    #[test]
+    fn any_invalid_range_spec_invalidates_the_set() {
+        for s in [
+            "bytes=0-1,5-4",
+            "bytes=0-1,x",
+            "bytes=0-1,-",
+            "bytes=0-1,5",
+            "bytes=0-1,1-2-3",
+            "bytes=0-1,+5-6",
+            "bytes=0-1,-+5",
+            "bytes=0-1,0x10-20",
+            "bytes=0-1,٣-٤",
+        ] {
+            assert!(s.parse::<HttpRange>().is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn leading_zeros() {
+        assert_eq!(
+            specs("bytes=000-0010,-005,07-"),
+            [
+                range(0, 10),
+                RangeSpec::Suffix(5),
+                RangeSpec::StartingPoint(7)
+            ]
+        );
+    }
+
+    #[test]
+    fn overflowing_positions_saturate() {
+        assert_eq!(
+            specs("bytes=99999999999999999999999-"),
+            [RangeSpec::StartingPoint(u64::MAX)]
+        );
+        assert_eq!(
+            specs("bytes=0-99999999999999999999999"),
+            [range(0, u64::MAX)]
+        );
+        assert_eq!(
+            specs("bytes=-99999999999999999999999"),
+            [RangeSpec::Suffix(u64::MAX)]
+        );
+        assert_eq!(
+            specs("bytes=18446744073709551615-18446744073709551616"),
+            [range(u64::MAX, u64::MAX)]
+        );
+        assert_eq!(
+            specs("bytes=99999999999999999999-099999999999999999999"),
+            [range(u64::MAX, u64::MAX)]
+        );
+    }
+
+    #[test]
+    fn overflowing_positions_followed_by_non_digits_rejected() {
+        for s in [
+            "bytes=184467440737095516160x-",
+            "bytes=0-184467440737095516160x",
+            "bytes=-99999999999999999999999abc",
+            "bytes=99999999999999999999999 -",
+        ] {
+            assert!(
+                matches!(
+                    s.parse::<HttpRange>().unwrap_err(),
+                    ParseHttpRangeOrContentRangeError::InvalidRangePiece(_)
+                ),
+                "{s}"
+            );
+        }
+    }
+
+    #[test]
+    fn overflowing_unordered_range_rejected() {
+        for s in [
+            "bytes=18446744073709551616-18446744073709551615",
+            "bytes=99999999999999999999999-99999999999999999999998",
+            "bytes=99999999999999999999999-5",
+        ] {
+            assert!(matches!(
+                s.parse::<HttpRange>().unwrap_err(),
+                ParseHttpRangeOrContentRangeError::UnorderedRange(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn too_many_list_elements_rejected() {
+        let at_limit = format!("bytes={}", vec!["0-0"; MAX_RANGE_SET_ELEMENTS].join(","));
+        assert_eq!(
+            at_limit.parse::<HttpRange>().unwrap().specs().len(),
+            MAX_RANGE_SET_ELEMENTS
+        );
+
+        let over_limit = format!("{at_limit},0-0");
+        assert_eq!(
+            over_limit.parse::<HttpRange>().unwrap_err(),
+            ParseHttpRangeOrContentRangeError::TooManyRanges
+        );
+
+        let empty_over_limit = format!("bytes=0-0{}", ",".repeat(MAX_RANGE_SET_ELEMENTS));
+        assert_eq!(
+            empty_over_limit.parse::<HttpRange>().unwrap_err(),
+            ParseHttpRangeOrContentRangeError::TooManyRanges
+        );
+    }
+
+    #[test]
+    fn multiple_ranges_to_string() {
+        let http_range = HttpRange::new(vec![
+            range(0, 1),
+            RangeSpec::StartingPoint(5),
+            RangeSpec::Suffix(3),
+        ])
+        .unwrap();
+        assert_eq!(http_range.to_string(), "bytes=0-1,5-,-3");
+        assert_eq!(specs(&http_range.to_string()), http_range.specs());
+    }
+
+    #[test]
+    fn range_set_size_is_bounded() {
+        assert_eq!(HttpRange::new(Vec::new()), None);
+        assert_eq!(
+            HttpRange::new(vec![RangeSpec::StartingPoint(0); MAX_RANGE_SET_ELEMENTS])
+                .unwrap()
+                .specs()
+                .len(),
+            MAX_RANGE_SET_ELEMENTS
+        );
+        assert_eq!(
+            HttpRange::new(vec![
+                RangeSpec::StartingPoint(0);
+                MAX_RANGE_SET_ELEMENTS + 1
+            ]),
+            None
         );
     }
 }
@@ -453,8 +708,8 @@ mod file_range {
         file_range,
         headers::{
             OrderedRange,
-            content_range::{Bound, HttpContentRange},
-            range::HttpRange,
+            content_range::{Bound, HttpContentRange, Unsatisfiable},
+            range::{HttpRange, MAX_RANGE_SET_ELEMENTS, RangeSpec},
         },
     };
 
@@ -467,111 +722,111 @@ mod file_range {
 
     #[test]
     fn starting_point_zero() {
-        let result = file_range(10, Some(HttpRange::StartingPoint(0))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::StartingPoint(0)))).unwrap();
         assert!(result.header().is_some());
         assert_eq!(result.range(), &(0..10));
     }
 
     #[test]
     fn starting_point_middle() {
-        let result = file_range(10, Some(HttpRange::StartingPoint(5))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::StartingPoint(5)))).unwrap();
         assert_eq!(result.range(), &(5..10));
     }
 
     #[test]
     fn starting_point_last_byte() {
-        let result = file_range(10, Some(HttpRange::StartingPoint(9))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::StartingPoint(9)))).unwrap();
         assert_eq!(result.range(), &(9..10));
     }
 
     #[test]
     fn starting_point_at_size() {
-        let result = file_range(10, Some(HttpRange::StartingPoint(10)));
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::StartingPoint(10))));
         assert!(result.is_err());
     }
 
     #[test]
     fn starting_point_beyond_size() {
-        let result = file_range(10, Some(HttpRange::StartingPoint(20)));
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::StartingPoint(20))));
         assert!(result.is_err());
     }
 
     #[test]
     fn range_single_byte() {
-        let range = HttpRange::Range(OrderedRange::new(0..=0).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=0).unwrap()));
         let result = file_range(10, Some(range)).unwrap();
         assert_eq!(result.range(), &(0..1));
     }
 
     #[test]
     fn range_full_file() {
-        let range = HttpRange::Range(OrderedRange::new(0..=9).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=9).unwrap()));
         let result = file_range(10, Some(range)).unwrap();
         assert_eq!(result.range(), &(0..10));
     }
 
     #[test]
     fn range_end_at_size_is_clamped() {
-        let range = HttpRange::Range(OrderedRange::new(0..=10).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=10).unwrap()));
         let result = file_range(10, Some(range)).unwrap();
         assert_eq!(result.range(), &(0..10));
     }
 
     #[test]
     fn range_beyond_size_is_clamped() {
-        let range = HttpRange::Range(OrderedRange::new(0..=50).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=50).unwrap()));
         let result = file_range(10, Some(range)).unwrap();
         assert_eq!(result.range(), &(0..10));
     }
 
     #[test]
     fn range_end_at_u64_max_is_clamped() {
-        let range = HttpRange::Range(OrderedRange::new(0..=u64::MAX).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=u64::MAX).unwrap()));
         let result = file_range(10, Some(range)).unwrap();
         assert_eq!(result.range(), &(0..10));
     }
 
     #[test]
     fn range_start_at_size_is_unsatisfiable() {
-        let range = HttpRange::Range(OrderedRange::new(10..=20).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(10..=20).unwrap()));
         let result = file_range(10, Some(range));
         assert!(result.is_err());
     }
 
     #[test]
     fn range_start_beyond_size_is_unsatisfiable() {
-        let range = HttpRange::Range(OrderedRange::new(50..=100).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(50..=100).unwrap()));
         let result = file_range(10, Some(range));
         assert!(result.is_err());
     }
 
     #[test]
     fn suffix_entire_file() {
-        let result = file_range(10, Some(HttpRange::Suffix(10))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::Suffix(10)))).unwrap();
         assert_eq!(result.range(), &(0..10));
     }
 
     #[test]
     fn suffix_last_byte() {
-        let result = file_range(10, Some(HttpRange::Suffix(1))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::Suffix(1)))).unwrap();
         assert_eq!(result.range(), &(9..10));
     }
 
     #[test]
     fn suffix_middle() {
-        let result = file_range(10, Some(HttpRange::Suffix(5))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::Suffix(5)))).unwrap();
         assert_eq!(result.range(), &(5..10));
     }
 
     #[test]
     fn suffix_zero_is_unsatisfiable() {
-        let result = file_range(10, Some(HttpRange::Suffix(0)));
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::Suffix(0))));
         assert!(result.is_err());
     }
 
     #[test]
     fn suffix_exceeds_size_is_clamped() {
-        let result = file_range(10, Some(HttpRange::Suffix(11))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::Suffix(11)))).unwrap();
         assert_eq!(result.range(), &(0..10));
     }
 
@@ -583,19 +838,19 @@ mod file_range {
 
     #[test]
     fn size_one_starting_point_zero() {
-        let result = file_range(1, Some(HttpRange::StartingPoint(0))).unwrap();
+        let result = file_range(1, Some(HttpRange::from(RangeSpec::StartingPoint(0)))).unwrap();
         assert_eq!(result.range(), &(0..1));
     }
 
     #[test]
     fn size_one_suffix_one() {
-        let result = file_range(1, Some(HttpRange::Suffix(1))).unwrap();
+        let result = file_range(1, Some(HttpRange::from(RangeSpec::Suffix(1)))).unwrap();
         assert_eq!(result.range(), &(0..1));
     }
 
     #[test]
     fn content_range_header_present_for_range_request() {
-        let result = file_range(10, Some(HttpRange::StartingPoint(0))).unwrap();
+        let result = file_range(10, Some(HttpRange::from(RangeSpec::StartingPoint(0)))).unwrap();
         let header = result.header().unwrap();
         assert_eq!(
             header,
@@ -612,28 +867,127 @@ mod file_range {
 
     #[test]
     fn size_zero_starting_point_is_unsatisfiable() {
-        let result = file_range(0, Some(HttpRange::StartingPoint(0)));
+        let result = file_range(0, Some(HttpRange::from(RangeSpec::StartingPoint(0))));
         assert!(result.is_err());
     }
 
     #[test]
     fn size_zero_range_is_unsatisfiable() {
-        let range = HttpRange::Range(OrderedRange::new(0..=0).unwrap());
+        let range = HttpRange::from(RangeSpec::Range(OrderedRange::new(0..=0).unwrap()));
         let result = file_range(0, Some(range));
         assert!(result.is_err());
     }
 
     #[test]
     fn size_zero_suffix_serves_full_response() {
-        let result = file_range(0, Some(HttpRange::Suffix(1))).unwrap();
+        let result = file_range(0, Some(HttpRange::from(RangeSpec::Suffix(1)))).unwrap();
         assert!(result.header().is_none());
         assert_eq!(result.range(), &(0..0));
     }
 
     #[test]
     fn size_zero_suffix_zero_is_unsatisfiable() {
-        let result = file_range(0, Some(HttpRange::Suffix(0)));
+        let result = file_range(0, Some(HttpRange::from(RangeSpec::Suffix(0))));
         assert!(result.is_err());
+    }
+
+    fn parsed(s: &str) -> Option<HttpRange> {
+        Some(s.parse().unwrap())
+    }
+
+    fn single(size: u64, s: &str) -> std::ops::Range<u64> {
+        let result = file_range(size, parsed(s)).unwrap();
+        let range = result.range().clone();
+        assert_eq!(
+            result.header(),
+            Some(HttpContentRange::Bound(
+                Bound::new(range.start..=range.end - 1, Some(size)).unwrap()
+            )),
+            "{s:?}"
+        );
+        range
+    }
+
+    #[test]
+    fn multiple_unsatisfiable_ranges_are_unsatisfiable() {
+        for s in ["bytes=10-,20-30,-0", "bytes=-0,-0", "bytes=10-10,11-"] {
+            let err = file_range(10, parsed(s)).unwrap_err();
+            assert_eq!(
+                err.header(),
+                HttpContentRange::Unsatisfiable(Unsatisfiable::new(10)),
+                "{s:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsatisfiable_ranges_are_dropped() {
+        assert_eq!(single(10, "bytes=50-60,2-3"), 2..4);
+        assert_eq!(single(10, "bytes=-0,2-3,10-"), 2..4);
+    }
+
+    #[test]
+    fn overlapping_ranges_are_coalesced() {
+        assert_eq!(single(100, "bytes=0-50,30-80"), 0..81);
+        assert_eq!(single(100, "bytes=0-,0-,0-"), 0..100);
+        assert_eq!(single(100, "bytes=40-60,-70,0-9"), 0..100);
+    }
+
+    #[test]
+    fn unordered_overlapping_ranges_are_coalesced() {
+        assert_eq!(single(100, "bytes=50-59,0-49,45-55"), 0..60);
+    }
+
+    #[test]
+    fn adjacent_ranges_are_coalesced() {
+        assert_eq!(single(100, "bytes=0-1,2-3"), 0..4);
+        assert_eq!(single(10000, "bytes=500-600,601-999"), 500..1000);
+    }
+
+    #[test]
+    fn ranges_separated_by_a_small_gap_are_coalesced() {
+        // The gap is smaller than the overhead of one more part.
+        assert_eq!(single(1000, "bytes=0-0,10-10"), 0..11);
+        assert_eq!(single(1000, "bytes=0-0,37-37"), 0..38);
+    }
+
+    #[test]
+    fn many_overlapping_ranges_are_coalesced() {
+        let many = format!("bytes={}", vec!["0-"; MAX_RANGE_SET_ELEMENTS].join(","));
+        assert_eq!(single(1000, &many), 0..1000);
+    }
+
+    #[test]
+    fn overflowing_positions() {
+        assert_eq!(single(10, "bytes=0-99999999999999999999"), 0..10);
+        assert_eq!(single(10, "bytes=-99999999999999999999"), 0..10);
+        assert!(file_range(10, parsed("bytes=99999999999999999999-")).is_err());
+        assert!(file_range(u64::MAX, parsed("bytes=99999999999999999999-")).is_err());
+    }
+
+    #[test]
+    fn disjoint_ranges_serve_full_response() {
+        for s in ["bytes=0-0,-1", "bytes=0-0,38-38", "bytes=50-59,0-9"] {
+            let result = file_range(100, parsed(s)).unwrap();
+            assert!(result.header().is_none(), "{s:?}");
+            assert_eq!(result.range(), &(0..100));
+        }
+    }
+
+    #[test]
+    fn size_zero_satisfiable_ranges_serve_full_response() {
+        let result = file_range(0, parsed("bytes=0-1,-5")).unwrap();
+        assert!(result.header().is_none());
+        assert_eq!(result.range(), &(0..0));
+    }
+
+    #[test]
+    fn size_zero_unsatisfiable_ranges_are_unsatisfiable() {
+        let err = file_range(0, parsed("bytes=0-1,-0,0-")).unwrap_err();
+        assert_eq!(
+            err.header(),
+            HttpContentRange::Unsatisfiable(Unsatisfiable::new(0))
+        );
     }
 }
 
@@ -641,7 +995,10 @@ mod file_range {
 mod serve_file {
     use bytes::Bytes;
 
-    use crate::{headers::range::HttpRange, serve_file_with_http_range};
+    use crate::{
+        headers::range::{HttpRange, RangeSpec},
+        serve_file_with_http_range,
+    };
 
     #[test]
     fn no_range_returns_full_body() {
@@ -654,7 +1011,7 @@ mod serve_file {
     #[test]
     fn range_slices_body() {
         let body = Bytes::from_static(b"hello world");
-        let range = Some(HttpRange::StartingPoint(6));
+        let range = Some(HttpRange::from(RangeSpec::StartingPoint(6)));
         let result = serve_file_with_http_range(body, range).unwrap();
         assert_eq!(result.body(), &Bytes::from_static(b"world"));
         assert!(result.header().is_some());
@@ -663,7 +1020,7 @@ mod serve_file {
     #[test]
     fn suffix_slices_from_end() {
         let body = Bytes::from_static(b"hello world");
-        let range = Some(HttpRange::Suffix(5));
+        let range = Some(HttpRange::from(RangeSpec::Suffix(5)));
         let result = serve_file_with_http_range(body, range).unwrap();
         assert_eq!(result.body(), &Bytes::from_static(b"world"));
     }
@@ -679,14 +1036,15 @@ mod serve_file {
     #[test]
     fn suffix_zero_is_unsatisfiable() {
         let body = Bytes::from_static(b"hello");
-        let result = serve_file_with_http_range(body, Some(HttpRange::Suffix(0)));
+        let result = serve_file_with_http_range(body, Some(HttpRange::from(RangeSpec::Suffix(0))));
         assert!(result.is_err());
     }
 
     #[test]
     fn empty_body_with_suffix_returns_empty_response() {
         let body = Bytes::new();
-        let result = serve_file_with_http_range(body, Some(HttpRange::Suffix(5))).unwrap();
+        let result =
+            serve_file_with_http_range(body, Some(HttpRange::from(RangeSpec::Suffix(5)))).unwrap();
         assert!(result.body().is_empty());
         assert!(result.header().is_none());
     }
@@ -702,7 +1060,10 @@ mod axum_range_extractor {
     use axum_core::extract::OptionalFromRequestParts;
     use http::{Method, Request, header::RANGE};
 
-    use crate::headers::{OrderedRange, range::HttpRange};
+    use crate::headers::{
+        OrderedRange,
+        range::{HttpRange, RangeSpec},
+    };
 
     fn extract(method: Method, range: Option<&str>) -> Option<HttpRange> {
         let mut builder = Request::builder().method(method);
@@ -724,7 +1085,9 @@ mod axum_range_extractor {
     fn get_request_extracts_range() {
         assert_eq!(
             extract(Method::GET, Some("bytes=0-10")),
-            Some(HttpRange::Range(OrderedRange::new(0..=10).unwrap()))
+            Some(HttpRange::from(RangeSpec::Range(
+                OrderedRange::new(0..=10).unwrap()
+            )))
         );
     }
 
@@ -743,13 +1106,48 @@ mod axum_range_extractor {
     fn malformed_range_is_ignored() {
         assert_eq!(extract(Method::GET, Some("bytes=10-0")), None);
     }
+
+    #[test]
+    fn multiple_ranges_are_extracted() {
+        assert_eq!(
+            extract(Method::GET, Some("bytes=0-1, 5-6,,-3")),
+            HttpRange::new(vec![
+                RangeSpec::Range(OrderedRange::new(0..=1).unwrap()),
+                RangeSpec::Range(OrderedRange::new(5..=6).unwrap()),
+                RangeSpec::Suffix(3),
+            ])
+        );
+    }
+
+    #[test]
+    fn non_get_request_ignores_multiple_ranges() {
+        assert_eq!(extract(Method::HEAD, Some("bytes=0-1,5-6")), None);
+        assert_eq!(extract(Method::POST, Some("bytes=0-1,5-6")), None);
+    }
+
+    #[test]
+    fn invalid_ranges_are_ignored() {
+        assert_eq!(extract(Method::GET, Some("bytes=0-1,5-4")), None);
+        assert_eq!(extract(Method::GET, Some("bytes=0-1,x")), None);
+        assert_eq!(extract(Method::GET, Some("items=0-1,5-6")), None);
+        assert_eq!(extract(Method::GET, Some("bytes=,")), None);
+    }
+
+    #[test]
+    fn too_many_ranges_are_ignored() {
+        let many = format!("bytes={}", vec!["0-0"; 300].join(","));
+        assert_eq!(extract(Method::GET, Some(&many)), None);
+    }
 }
 
 #[cfg(test)]
 mod if_range {
     use http::HeaderValue;
 
-    use crate::headers::{if_range::IfRange, range::HttpRange};
+    use crate::headers::{
+        if_range::IfRange,
+        range::{HttpRange, RangeSpec},
+    };
 
     #[test]
     fn parse_date() {
@@ -783,16 +1181,16 @@ mod if_range {
     fn date_matches_last_modified() {
         let ir: IfRange = "Sun, 05 Apr 2026 04:49:21 GMT".parse().unwrap();
         let lm = HeaderValue::from_static("Sun, 05 Apr 2026 04:49:21 GMT");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
-        assert_eq!(ir.evaluate(range, Some(&lm), None), Some(range));
+        assert_eq!(ir.evaluate(range.clone(), Some(&lm), None), Some(range));
     }
 
     #[test]
     fn date_does_not_match_different_last_modified() {
         let ir: IfRange = "Mon, 01 Jan 2024 00:00:00 GMT".parse().unwrap();
         let lm = HeaderValue::from_static("Sun, 05 Apr 2026 04:49:21 GMT");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         assert_eq!(ir.evaluate(range, Some(&lm), None), None);
     }
@@ -800,7 +1198,7 @@ mod if_range {
     #[test]
     fn date_does_not_match_missing_last_modified() {
         let ir: IfRange = "Sun, 05 Apr 2026 04:49:21 GMT".parse().unwrap();
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         assert_eq!(ir.evaluate(range, None, None), None);
     }
@@ -809,16 +1207,16 @@ mod if_range {
     fn strong_etag_matches() {
         let ir: IfRange = "\"abc123\"".parse().unwrap();
         let etag = HeaderValue::from_static("\"abc123\"");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
-        assert_eq!(ir.evaluate(range, None, Some(&etag)), Some(range));
+        assert_eq!(ir.evaluate(range.clone(), None, Some(&etag)), Some(range));
     }
 
     #[test]
     fn strong_etag_does_not_match_different() {
         let ir: IfRange = "\"abc123\"".parse().unwrap();
         let etag = HeaderValue::from_static("\"xyz789\"");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         assert_eq!(ir.evaluate(range, None, Some(&etag)), None);
     }
@@ -826,7 +1224,7 @@ mod if_range {
     #[test]
     fn strong_etag_does_not_match_missing() {
         let ir: IfRange = "\"abc123\"".parse().unwrap();
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         assert_eq!(ir.evaluate(range, None, None), None);
     }
@@ -835,7 +1233,7 @@ mod if_range {
     fn weak_etag_never_matches_in_strong_comparison() {
         let ir: IfRange = "W/\"abc123\"".parse().unwrap();
         let etag = HeaderValue::from_static("W/\"abc123\"");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         assert_eq!(ir.evaluate(range, None, Some(&etag)), None);
     }
@@ -844,7 +1242,7 @@ mod if_range {
     fn weak_if_range_does_not_match_strong_etag() {
         let ir: IfRange = "W/\"abc123\"".parse().unwrap();
         let etag = HeaderValue::from_static("\"abc123\"");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         assert_eq!(ir.evaluate(range, None, Some(&etag)), None);
     }
@@ -853,7 +1251,7 @@ mod if_range {
     fn strong_if_range_does_not_match_weak_etag() {
         let ir: IfRange = "\"abc123\"".parse().unwrap();
         let etag = HeaderValue::from_static("W/\"abc123\"");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         assert_eq!(ir.evaluate(range, None, Some(&etag)), None);
     }
@@ -862,7 +1260,7 @@ mod if_range {
     fn date_ignores_etag() {
         let ir: IfRange = "Sun, 05 Apr 2026 04:49:21 GMT".parse().unwrap();
         let etag = HeaderValue::from_static("\"abc123\"");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         // Date-based If-Range only checks Last-Modified, not ETag
         assert_eq!(ir.evaluate(range, None, Some(&etag)), None);
@@ -872,7 +1270,7 @@ mod if_range {
     fn etag_ignores_last_modified() {
         let ir: IfRange = "\"abc123\"".parse().unwrap();
         let lm = HeaderValue::from_static("Sun, 05 Apr 2026 04:49:21 GMT");
-        let range = HttpRange::StartingPoint(0);
+        let range = HttpRange::from(RangeSpec::StartingPoint(0));
 
         // ETag-based If-Range only checks ETag, not Last-Modified
         assert_eq!(ir.evaluate(range, Some(&lm), None), None);
