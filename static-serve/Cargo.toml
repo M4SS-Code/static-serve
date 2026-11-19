@@ -8,6 +8,8 @@ keywords.workspace = true
 description.workspace = true
 categories.workspace = true
 repository.workspace = true
+# The fixtures live in the workspace root, so the tests can't run from a package
+exclude = ["tests"]
 
 [dependencies]
 static-serve-macro = { path = "../static-serve-macro", version = "=0.6.4" }
