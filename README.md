@@ -46,6 +46,10 @@ Paths in `cache_busted_paths` and `ignore_paths` are relative to the embedded di
 
 Set `utf8_charset = false` if a layer above the router sets the charset, or for HTML that declares a legacy encoding with `<meta charset>` while only containing ASCII: browsers let the HTTP charset override `<meta>`, which also changes the encoding of the forms and URLs the page submits.
 
+## Features
+
+- `multipart` (off by default): answer a request for several disjoint ranges of the uncompressed body with a `206` holding them as `multipart/byteranges` content, each part with the file's `Content-Type`. More than 32 ranges left after merging still get the full `200` response.
+
 ## Which files are embedded
 
 - Hidden files are embedded like any other. List the ones you don't want in `ignore_paths`.
@@ -57,7 +61,7 @@ Set `utf8_charset = false` if a layer above the router sets the charset, or for 
 
 - The body is selected from `Accept-Encoding`, and each body has its own strong `ETag`. A request that refuses every body of a file gets `406 Not Acceptable`.
 - `If-None-Match` and `If-Match` are evaluated against that `ETag`. `Last-Modified` isn't sent, so date-based conditions don't apply.
-- Byte ranges and `If-Range` are supported on the uncompressed body, which is the only one sent with `Accept-Ranges: bytes`. `Range` is ignored when a compressed body is selected, so send `Accept-Encoding: identity` to use ranges. Overlapping and nearby ranges are merged and unsatisfiable ones dropped, so a request that is left with one range gets a single-part `206`, and one with none gets `416`. Several disjoint ranges and malformed `Range` headers get the full `200` response, and `HEAD` always ignores `Range`.
+- Byte ranges and `If-Range` are supported on the uncompressed body, which is the only one sent with `Accept-Ranges: bytes`. `Range` is ignored when a compressed body is selected, so send `Accept-Encoding: identity` to use ranges. Overlapping and nearby ranges are merged and unsatisfiable ones dropped, so a request that is left with one range gets a single-part `206`, and one with none gets `416`. Several disjoint ranges get the full `200` response, unless the `multipart` feature is enabled. Malformed `Range` headers get the full `200` response, and `HEAD` always ignores `Range`.
 - `If-Match` and `If-Range` only match a strong `ETag`. CDNs and proxies that compress responses themselves turn it into a weak one, so those conditions then fail. To keep them working, serve the precompressed bodies with `compress = true` and turn off recompression in front of the server.
 
 ## Build times

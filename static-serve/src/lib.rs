@@ -8,8 +8,8 @@ use axum::{
     http::{
         StatusCode,
         header::{
-            ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH,
-            CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, IF_RANGE, VARY,
+            ACCEPT_ENCODING, ACCEPT_RANGES, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_LENGTH, ETAG,
+            HeaderMap, HeaderValue, IF_MATCH, IF_NONE_MATCH, IF_RANGE, VARY,
         },
         request::Parts,
     },
@@ -17,7 +17,7 @@ use axum::{
     routing::MethodRouter,
 };
 use bytes::Bytes;
-use range_requests::{headers::range::HttpRange, serve_file_with_http_range};
+use range_requests::{UnsatisfiableRange, headers::range::HttpRange};
 
 pub use static_serve_macro::{embed_asset, embed_assets};
 
@@ -377,18 +377,52 @@ fn static_inner(asset: EmbeddedAsset, request: StaticRequest) -> impl IntoRespon
         http_range.filter(|_| is_identity && conditions.if_range_passes(selected.etag));
     let accept_ranges = is_identity.then_some([(ACCEPT_RANGES, HeaderValue::from_static("bytes"))]);
 
-    match serve_file_with_http_range(selected_body, http_range) {
-        Ok(body_range) => (
+    let content_type = HeaderValue::from_static(content_type);
+    match serve_range(selected_body, http_range, content_type) {
+        Ok(response) => (
             (
                 validators,
                 optional_cache_control,
                 accept_ranges,
-                [(CONTENT_TYPE, HeaderValue::from_static(content_type))],
                 optional_content_encoding,
             ),
-            body_range,
+            response,
         )
             .into_response(),
         Err(unsatisfiable) => (validators, accept_ranges, unsatisfiable).into_response(),
     }
+}
+
+/// Answer with the ranges of `body` that `http_range` selects, or all of it
+///
+/// The status is 200 or 206, and the `Content-Type` is set here, since a
+/// `multipart/byteranges` response has its own.
+#[cfg(not(feature = "multipart"))]
+fn serve_range(
+    body: Bytes,
+    http_range: Option<HttpRange>,
+    content_type: HeaderValue,
+) -> Result<Response, UnsatisfiableRange> {
+    range_requests::serve_file_with_http_range(body, http_range).map(|body_range| {
+        (
+            [(axum::http::header::CONTENT_TYPE, content_type)],
+            body_range,
+        )
+            .into_response()
+    })
+}
+
+/// Answer with the ranges of `body` that `http_range` selects, or all of it
+///
+/// The status is 200 or 206, and the `Content-Type` is set here, since a
+/// `multipart/byteranges` response has its own: several disjoint ranges are
+/// sent as `multipart/byteranges` content, each part with `content_type`.
+#[cfg(feature = "multipart")]
+fn serve_range(
+    body: Bytes,
+    http_range: Option<HttpRange>,
+    content_type: HeaderValue,
+) -> Result<Response, UnsatisfiableRange> {
+    range_requests::serve_file_with_http_range_multipart(body, http_range, Some(content_type))
+        .map(IntoResponse::into_response)
 }

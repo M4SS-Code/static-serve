@@ -17,6 +17,11 @@ axum = { version = "0.8", default-features = false }
 bytes = "1.10"
 range-requests = { version = "0.3", features = ["axum"] }
 
+[features]
+default = []
+# Serve several disjoint ranges as multipart/byteranges content
+multipart = ["range-requests/multipart"]
+
 [dev-dependencies]
 http-body-util = "0.1"
 tokio = { version = "1.54", features = ["rt", "macros"] }

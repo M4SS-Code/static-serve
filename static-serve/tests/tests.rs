@@ -2069,6 +2069,7 @@ async fn multiple_ranges_are_coalesced_or_dropped() {
     );
 }
 
+#[cfg(not(feature = "multipart"))]
 #[tokio::test]
 async fn disjoint_ranges_get_the_full_body() {
     let router: Router<()> = embed_assets!("../test_fixtures/assets/big");
@@ -2083,6 +2084,82 @@ async fn disjoint_ranges_get_the_full_body() {
     );
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(*body, asset[..]);
+}
+
+#[cfg(feature = "multipart")]
+#[tokio::test]
+async fn disjoint_ranges_get_multipart_byteranges() {
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big", compress = true);
+    let asset = include_bytes!("../../test_fixtures/assets/big/app.js");
+    let length = asset.len();
+
+    let response = ranged_response(router.clone(), "bytes=500-509,0-9").await;
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert!(response.headers().get("content-range").is_none());
+    assert_eq!(response.headers().get(ACCEPT_RANGES).unwrap(), "bytes");
+    assert!(response.headers().get(CONTENT_ENCODING).is_none());
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let boundary = content_type
+        .strip_prefix("multipart/byteranges; boundary=")
+        .unwrap()
+        .to_owned();
+    let content_length = response.headers().get("content-length").unwrap().clone();
+
+    // The parts are sent in the order they were requested, each with the
+    // asset's Content-Type (RFC 9110 sections 14.6 and 15.3.7.2)
+    let mut expected = Vec::new();
+    for (i, (start, end)) in [(500, 509), (0, 9)].into_iter().enumerate() {
+        if i > 0 {
+            expected.extend_from_slice(b"\r\n");
+        }
+        expected.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Type: text/javascript\r\n\
+                 Content-Range: bytes {start}-{end}/{length}\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        expected.extend_from_slice(&asset[start..=end]);
+    }
+    expected.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(*body, expected);
+    // The length is known upfront, so the response isn't chunked
+    assert_eq!(content_length, expected.len().to_string().as_str());
+
+    // A compressed body is never ranged, and HEAD ignores Range
+    let mut request = create_request("/app.js", &Compression::Gzip);
+    request
+        .headers_mut()
+        .insert(RANGE, HeaderValue::from_static("bytes=500-509,0-9"));
+    let response = get_response(router.clone(), request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get(CONTENT_ENCODING).unwrap(), "gzip");
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/javascript"
+    );
+
+    let mut request = create_request("/app.js", &Compression::None);
+    *request.method_mut() = Method::HEAD;
+    request
+        .headers_mut()
+        .insert(RANGE, HeaderValue::from_static("bytes=500-509,0-9"));
+    let response = get_response(router, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/javascript"
+    );
+    assert_eq!(
+        response.headers().get("content-length").unwrap(),
+        &length.to_string()
+    );
 }
 
 #[tokio::test]
