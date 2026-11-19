@@ -333,8 +333,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "range-requests"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e30cea6780132baa8257e81ab3f6e11526a9271e9032963eab8d830972e68b6"
+source = "git+https://github.com/M4SS-Code/range-requests?branch=fix%2Fmultiple-ranges#1addd3b4c937432252057dc4e47ea3e036de3cf3"
 dependencies = [
  "axum-core",
  "bytes",

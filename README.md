@@ -57,7 +57,7 @@ Set `utf8_charset = false` if a layer above the router sets the charset, or for 
 
 - The body is selected from `Accept-Encoding`, and each body has its own strong `ETag`. A request that refuses every body of a file gets `406 Not Acceptable`.
 - `If-None-Match` and `If-Match` are evaluated against that `ETag`. `Last-Modified` isn't sent, so date-based conditions don't apply.
-- Single byte ranges and `If-Range` are supported on the uncompressed body, which is the only one sent with `Accept-Ranges: bytes`. `Range` is ignored when a compressed body is selected, so send `Accept-Encoding: identity` to use ranges. Multi-range and malformed `Range` headers get the full `200` response, and `HEAD` always ignores `Range`.
+- Byte ranges and `If-Range` are supported on the uncompressed body, which is the only one sent with `Accept-Ranges: bytes`. `Range` is ignored when a compressed body is selected, so send `Accept-Encoding: identity` to use ranges. Overlapping and nearby ranges are merged and unsatisfiable ones dropped, so a request that is left with one range gets a single-part `206`, and one with none gets `416`. Several disjoint ranges and malformed `Range` headers get the full `200` response, and `HEAD` always ignores `Range`.
 - `If-Match` and `If-Range` only match a strong `ETag`. CDNs and proxies that compress responses themselves turn it into a weak one, so those conditions then fail. To keep them working, serve the precompressed bodies with `compress = true` and turn off recompression in front of the server.
 
 ## Build times

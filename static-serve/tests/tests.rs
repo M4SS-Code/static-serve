@@ -1998,8 +1998,8 @@ async fn unsatisfiable_and_ignored_ranges() {
     for (range, status) in [
         ("bytes=-0", StatusCode::RANGE_NOT_SATISFIABLE),
         ("bytes=999-", StatusCode::RANGE_NOT_SATISFIABLE),
+        ("bytes=999-,-0", StatusCode::RANGE_NOT_SATISFIABLE),
         ("bytes=2-1", StatusCode::OK),
-        ("bytes=0-1,3-4", StatusCode::OK),
         ("items=0-1", StatusCode::OK),
     ] {
         let request = Request::builder()
@@ -2021,6 +2021,68 @@ async fn unsatisfiable_and_ignored_ranges() {
             );
         }
     }
+}
+
+async fn ranged_response(router: Router<()>, range: &'static str) -> Response<Body> {
+    let request = Request::builder()
+        .uri("/app.js")
+        .header(RANGE, range)
+        .body(Body::empty())
+        .unwrap();
+    get_response(router, request).await
+}
+
+#[tokio::test]
+async fn multiple_ranges_are_coalesced_or_dropped() {
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big");
+    let asset = include_bytes!("../../test_fixtures/assets/big/app.js");
+    let length = asset.len();
+
+    // Overlapping and nearby ranges are merged, and unsatisfiable ones are
+    // dropped, so a single range is left and sent without multipart content.
+    for (range, start, end) in [
+        ("bytes=0-1,3-4", 0, 4),
+        ("bytes=10-19,0-14", 0, 19),
+        ("bytes=999-,0-1", 0, 1),
+        ("bytes=-5,590-594", 590, 599),
+    ] {
+        let response = ranged_response(router.clone(), range).await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT, "{range}");
+        assert_eq!(
+            response.headers().get("content-range").unwrap(),
+            &format!("bytes {start}-{end}/{length}"),
+            "{range}"
+        );
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/javascript"
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(*body, asset[start..=end], "{range}");
+    }
+
+    let response = ranged_response(router, "bytes=999-,-0").await;
+    assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        response.headers().get("content-range").unwrap(),
+        &format!("bytes */{length}")
+    );
+}
+
+#[tokio::test]
+async fn disjoint_ranges_get_the_full_body() {
+    let router: Router<()> = embed_assets!("../test_fixtures/assets/big");
+    let asset = include_bytes!("../../test_fixtures/assets/big/app.js");
+
+    let response = ranged_response(router, "bytes=0-9,500-509").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("content-range").is_none());
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/javascript"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(*body, asset[..]);
 }
 
 #[tokio::test]

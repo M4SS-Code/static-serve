@@ -31,3 +31,6 @@ redundant_closure_for_method_calls = "warn"
 semicolon_if_nothing_returned = "warn"
 str_to_string = "warn"
 clone_on_ref_ptr = "warn"
+
+[patch.crates-io]
+range-requests = { git = "https://github.com/M4SS-Code/range-requests", branch = "fix/multiple-ranges" }

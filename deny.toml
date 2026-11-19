@@ -23,6 +23,9 @@ deny = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = [
+    "https://github.com/M4SS-Code/range-requests",
+]
 
 [sources.allow-org]
 #github = ["M4SS-Code"]
