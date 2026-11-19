@@ -93,6 +93,9 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
+      - name: cargo test (--all-features)
+        run: cargo test --locked --all-features
+
   msrv:
     # The minimum supported Rust version (Cargo.toml rust-version).
     if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository
@@ -123,6 +126,9 @@ jobs:
 
       - name: cargo test
         run: cargo test --locked
+
+      - name: cargo test (--all-features)
+        run: cargo test --locked --all-features
 
   deny:
     if: forgejo.event_name != 'pull_request' || forgejo.event.pull_request.head.repo.full_name == forgejo.repository

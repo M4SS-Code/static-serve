@@ -93,6 +93,9 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
+      - name: cargo test (--all-features)
+        run: cargo test --locked --all-features
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-26.04
