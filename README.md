@@ -1,7 +1,16 @@
 # Range requests
 
 Various utilities to deal with `Range Requests`, including requests for
-multiple ranges, which are served when they coalesce into a single one.
+multiple ranges, which are served when they coalesce into a single one, or
+as `multipart/byteranges` with the `multipart` feature.
+
+## Features
+
+- `axum`: extract the `Range` header and turn the responses into axum
+  responses.
+- `multipart`: serve several disjoint ranges as `multipart/byteranges`
+  content, streamed without copying the body, delimited by a boundary
+  generated with `rand`.
 
 ## License
 

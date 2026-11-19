@@ -1,3 +1,27 @@
+//! Various utilities to deal with `Range Requests` ([RFC 9110 Section 14]).
+//!
+//! # Features
+//!
+//! - `axum`: extract the `Range` header and turn the responses into axum
+//!   responses.
+//! - `multipart`: serve several disjoint ranges as `multipart/byteranges`
+//!   content ([RFC 9110 Section 14.6]), streamed without copying the body,
+//!   delimited by a boundary generated with `rand`. Without it, a `Range`
+//!   header asking for them is ignored. See
+//!   [`serve_file_with_http_range_multipart`] and [`file_range_multipart`].
+//!
+//! [RFC 9110 Section 14]: https://www.rfc-editor.org/rfc/rfc9110#section-14
+//! [RFC 9110 Section 14.6]: https://www.rfc-editor.org/rfc/rfc9110#section-14.6
+#![cfg_attr(
+    feature = "multipart",
+    doc = "[`serve_file_with_http_range_multipart`]: crate::serve_file_with_http_range_multipart",
+    doc = "[`file_range_multipart`]: crate::file_range_multipart"
+)]
+#![cfg_attr(
+    not(feature = "multipart"),
+    doc = "[`serve_file_with_http_range_multipart`]: crate#features",
+    doc = "[`file_range_multipart`]: crate#features"
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::ops::Range;
@@ -5,6 +29,14 @@ use std::ops::Range;
 use bytes::Bytes;
 
 pub mod headers;
+#[cfg(feature = "multipart")]
+mod multipart;
+
+#[cfg(feature = "multipart")]
+pub use crate::multipart::{
+    FileRanges, MultipartBody, MultipartBodyRange, file_range_multipart,
+    serve_file_with_http_range_multipart,
+};
 
 use crate::headers::{
     content_range::{Bound, HttpContentRange, Unsatisfiable},
@@ -13,9 +45,19 @@ use crate::headers::{
 
 /// Returns a [`BodyRange`] of [`Bytes`] if the provided [`HttpRange`] is satisfiable, otherwise it returns [`UnsatisfiableRange`].
 ///
-/// The range is selected as described in [`file_range`].
+/// The range is selected as described in [`file_range`]. With the
+/// `multipart` feature, [`serve_file_with_http_range_multipart`] also
+/// serves several disjoint ranges, as `multipart/byteranges` content.
 ///
 /// [`HttpRange`]: crate::headers::range::HttpRange
+#[cfg_attr(
+    feature = "multipart",
+    doc = "[`serve_file_with_http_range_multipart`]: crate::serve_file_with_http_range_multipart"
+)]
+#[cfg_attr(
+    not(feature = "multipart"),
+    doc = "[`serve_file_with_http_range_multipart`]: crate#features"
+)]
 pub fn serve_file_with_http_range(
     body: Bytes,
     http_range: Option<HttpRange>,
@@ -47,8 +89,9 @@ pub fn serve_file_with_http_range(
 ///   it is selected, to be sent as a 206 (Partial Content) response;
 /// - if several disjoint ranges remain, the `Range` header is ignored and
 ///   the whole representation is selected, to be sent as a 200 (OK)
-///   response, since this crate can't generate the
-///   `multipart/byteranges` content they would need;
+///   response, since sending them requires `multipart/byteranges`
+///   content; with the `multipart` feature, [`file_range_multipart`]
+///   selects them instead;
 /// - if the representation is empty and the ranges are satisfiable, the
 ///   `Range` header is ignored and the whole (empty) representation is
 ///   selected, since the `Content-Range` of a 206 can't describe an empty
@@ -58,16 +101,37 @@ pub fn serve_file_with_http_range(
 /// [RFC 9110 Section 14.1.2]: https://www.rfc-editor.org/rfc/rfc9110#section-14.1.2
 /// [RFC 9110 Section 14.2]: https://www.rfc-editor.org/rfc/rfc9110#section-14.2
 /// [RFC 9110 Section 15.3.7.2]: https://www.rfc-editor.org/rfc/rfc9110#section-15.3.7.2
+#[cfg_attr(
+    feature = "multipart",
+    doc = "[`file_range_multipart`]: crate::file_range_multipart"
+)]
+#[cfg_attr(
+    not(feature = "multipart"),
+    doc = "[`file_range_multipart`]: crate#features"
+)]
 pub fn file_range(
     size: u64,
     http_range: Option<HttpRange>,
 ) -> Result<ContentRange, UnsatisfiableRange> {
-    let full = ContentRange {
-        header: None,
-        range: 0..size,
-    };
+    Ok(match selected_ranges(size, http_range)?.as_slice() {
+        [range] => ContentRange::part(range.clone(), size),
+        _ => ContentRange {
+            header: None,
+            range: 0..size,
+        },
+    })
+}
+
+/// Selects the ranges of a representation of `size` bytes to send in
+/// response to `http_range`, as described in [`file_range`]: the
+/// satisfiable ranges after coalescing, in request order, or none if the
+/// whole representation has to be sent.
+fn selected_ranges(
+    size: u64,
+    http_range: Option<HttpRange>,
+) -> Result<Vec<Range<u64>>, UnsatisfiableRange> {
     let Some(http_range) = http_range else {
-        return Ok(full);
+        return Ok(Vec::new());
     };
 
     let ranges = satisfiable_ranges(size, &http_range);
@@ -82,21 +146,10 @@ pub fn file_range(
     // full (empty) representation instead, as permitted by RFC 9110
     // Section 14.2.
     if size == 0 {
-        return Ok(full);
+        return Ok(Vec::new());
     }
 
-    match coalesce(ranges).as_slice() {
-        [range] => {
-            let content_range = HttpContentRange::Bound(
-                Bound::new(range.start..=range.end - 1, Some(size)).unwrap(),
-            );
-            Ok(ContentRange {
-                header: Some(content_range),
-                range: range.clone(),
-            })
-        }
-        _ => Ok(full),
-    }
+    Ok(coalesce(ranges))
 }
 
 /// Resolves the satisfiable `range-spec`s of `http_range` against a
@@ -197,6 +250,16 @@ pub struct ContentRange {
 }
 
 impl ContentRange {
+    /// Returns the [`ContentRange`] of the non-empty `range` of a
+    /// representation of `size` bytes.
+    fn part(range: Range<u64>, size: u64) -> Self {
+        let header = Bound::new(range.start..=range.end - 1, Some(size)).unwrap();
+        Self {
+            header: Some(HttpContentRange::Bound(header)),
+            range,
+        }
+    }
+
     /// Returns an option of [`HttpContentRange`].
     /// It is `None` if no range was applied to the body: either no
     /// [`HttpRange`] was provided, or it was ignored as described in

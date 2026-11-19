@@ -1050,6 +1050,507 @@ mod serve_file {
     }
 }
 
+#[cfg(feature = "multipart")]
+mod file_range_multipart {
+    use std::ops::Range;
+
+    use crate::{
+        FileRanges, file_range_multipart,
+        headers::{
+            content_range::{Bound, HttpContentRange, Unsatisfiable},
+            range::{HttpRange, MAX_RANGE_SET_ELEMENTS},
+        },
+    };
+
+    fn parsed(s: &str) -> Option<HttpRange> {
+        Some(s.parse().unwrap())
+    }
+
+    fn assert_part_header(size: u64, header: Option<HttpContentRange>, range: &Range<u64>) {
+        assert_eq!(
+            header,
+            Some(HttpContentRange::Bound(
+                Bound::new(range.start..=range.end - 1, Some(size)).unwrap()
+            ))
+        );
+    }
+
+    fn single(size: u64, s: &str) -> Range<u64> {
+        let FileRanges::Single(part) = file_range_multipart(size, parsed(s)).unwrap() else {
+            panic!("expected a single part response to {s:?}");
+        };
+        assert_part_header(size, part.header(), part.range());
+        part.range().clone()
+    }
+
+    fn multipart(size: u64, s: &str) -> Vec<Range<u64>> {
+        let FileRanges::Multipart(parts) = file_range_multipart(size, parsed(s)).unwrap() else {
+            panic!("expected a multipart response to {s:?}");
+        };
+        parts
+            .iter()
+            .map(|part| {
+                assert_part_header(size, part.header(), part.range());
+                part.range().clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn no_range_is_full() {
+        assert_eq!(file_range_multipart(10, None).unwrap(), FileRanges::Full);
+    }
+
+    #[test]
+    fn single_range_is_never_multipart() {
+        assert_eq!(single(10, "bytes=0-"), 0..10);
+        assert_eq!(single(10, "bytes=2-3"), 2..4);
+        assert_eq!(single(10, "bytes=-1"), 9..10);
+    }
+
+    #[test]
+    fn ranges_coalescing_into_one_are_a_single_part() {
+        assert_eq!(single(100, "bytes=0-50,30-80"), 0..81);
+        assert_eq!(single(1000, "bytes=0-0,37-37"), 0..38);
+        assert_eq!(single(10, "bytes=50-60,2-3"), 2..4);
+    }
+
+    #[test]
+    fn disjoint_ranges_are_multipart() {
+        // The example of RFC 9110 Section 14.1.2.
+        assert_eq!(multipart(10000, "bytes=0-0,-1"), [0..1, 9999..10000]);
+        assert_eq!(
+            multipart(10000, "bytes= 0-999, 4500-5499, -1000"),
+            [0..1000, 4500..5500, 9000..10000]
+        );
+        // The gap is as large as the overhead of one more part.
+        assert_eq!(multipart(100, "bytes=0-0,38-38"), [0..1, 38..39]);
+    }
+
+    #[test]
+    fn multipart_keeps_request_order() {
+        assert_eq!(multipart(100, "bytes=50-59,0-9"), [50..60, 0..10]);
+        assert_eq!(
+            multipart(1000, "bytes=-10,500-599,0-9"),
+            [990..1000, 500..600, 0..10]
+        );
+    }
+
+    #[test]
+    fn multipart_coalesced_range_takes_the_place_of_its_first_range() {
+        // 0-9 and 5-14 are coalesced into 0-14, in the place of 5-14.
+        assert_eq!(
+            multipart(1000, "bytes=500-599,5-14,900-,0-9"),
+            [500..600, 0..15, 900..1000]
+        );
+    }
+
+    #[test]
+    fn multipart_drops_unsatisfiable_ranges() {
+        assert_eq!(
+            multipart(100, "bytes=-0,0-9,100-,50-59,200-300"),
+            [0..10, 50..60]
+        );
+    }
+
+    fn small_ranges(count: usize) -> String {
+        let ranges = (0..count)
+            .rev()
+            .map(|i| format!("{0}-{0}", i * 100))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("bytes={ranges}")
+    }
+
+    #[test]
+    fn up_to_32_small_ranges_are_multipart() {
+        let parts = multipart(100 * 32, &small_ranges(32));
+        assert_eq!(parts.len(), 32);
+        assert_eq!(parts[0], 3100..3101);
+    }
+
+    #[test]
+    fn more_than_32_small_ranges_are_ignored() {
+        for count in [33, MAX_RANGE_SET_ELEMENTS] {
+            let result = file_range_multipart(100 * count as u64, parsed(&small_ranges(count)));
+            assert_eq!(result.unwrap(), FileRanges::Full);
+        }
+    }
+
+    #[test]
+    fn many_ranges_coalescing_into_few_parts_are_multipart() {
+        let ranges = (0..MAX_RANGE_SET_ELEMENTS - 1)
+            .map(|i| format!("{}-{}", i * 10, i * 10 + 9))
+            .collect::<Vec<_>>()
+            .join(",");
+        let parts = multipart(10_000, &format!("bytes={ranges},9000-"));
+        assert_eq!(parts, [0..2550, 9000..10_000]);
+    }
+
+    #[test]
+    fn unsatisfiable_ranges_are_unsatisfiable() {
+        for (size, s) in [(10, "bytes=10-,20-30,-0"), (0, "bytes=0-1,-0,0-")] {
+            let err = file_range_multipart(size, parsed(s)).unwrap_err();
+            assert_eq!(
+                err.header(),
+                HttpContentRange::Unsatisfiable(Unsatisfiable::new(size))
+            );
+        }
+    }
+
+    #[test]
+    fn size_zero_satisfiable_ranges_are_full() {
+        let result = file_range_multipart(0, parsed("bytes=0-1,-5")).unwrap();
+        assert_eq!(result, FileRanges::Full);
+    }
+}
+
+#[cfg(feature = "multipart")]
+mod serve_file_multipart {
+    use bytes::Bytes;
+    use http::{HeaderValue, StatusCode};
+
+    use crate::{
+        MultipartBodyRange,
+        headers::{
+            content_range::{Bound, HttpContentRange, Unsatisfiable},
+            range::HttpRange,
+        },
+        multipart::tests::{collect, is_valid_boundary},
+        serve_file_with_http_range_multipart,
+    };
+
+    fn parsed(s: &str) -> Option<HttpRange> {
+        Some(s.parse().unwrap())
+    }
+
+    fn content_type() -> Option<HeaderValue> {
+        Some(HeaderValue::from_static("text/plain; charset=utf-8"))
+    }
+
+    fn serve(
+        body: &Bytes,
+        range: Option<&str>,
+        content_type: Option<HeaderValue>,
+    ) -> MultipartBodyRange {
+        serve_file_with_http_range_multipart(body.clone(), range.and_then(parsed), content_type)
+            .unwrap()
+    }
+
+    fn boundary(body_range: &MultipartBodyRange) -> String {
+        let content_type = body_range.content_type().unwrap().to_str().unwrap();
+        let boundary = content_type
+            .strip_prefix("multipart/byteranges; boundary=")
+            .unwrap();
+        assert!(is_valid_boundary(boundary));
+        boundary.to_owned()
+    }
+
+    /// Splits `multipart/byteranges` content into the headers and the
+    /// content of each part.
+    fn parse_multipart(body_range: MultipartBodyRange) -> Vec<(String, Bytes)> {
+        let boundary = boundary(&body_range);
+        let body = Bytes::from(collect(body_range.into_body()).1);
+        let close_delimiter = format!("\r\n--{boundary}--\r\n");
+        assert!(body.ends_with(close_delimiter.as_bytes()));
+        let body = body.slice(..body.len() - close_delimiter.len());
+        let dash_boundary = format!("--{boundary}\r\n");
+        assert!(body.starts_with(dash_boundary.as_bytes()));
+        let delimiter = format!("\r\n--{boundary}\r\n");
+
+        let mut parts = Vec::new();
+        let mut rest = body.slice(dash_boundary.len()..);
+        loop {
+            let end = rest
+                .windows(delimiter.len())
+                .position(|window| window == delimiter.as_bytes())
+                .unwrap_or(rest.len());
+            let part = rest.slice(..end);
+            let headers_end = part.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+            let headers = String::from_utf8(part[..headers_end + 2].to_vec()).unwrap();
+            parts.push((headers, part.slice(headers_end + 4..)));
+            if end == rest.len() {
+                return parts;
+            }
+            rest = rest.slice(end + delimiter.len()..);
+        }
+    }
+
+    #[test]
+    fn full_body() {
+        let body = Bytes::from_static(b"hello world");
+        let result = serve(&body, None, content_type());
+        assert_eq!(result.status(), StatusCode::OK);
+        assert_eq!(result.content_type(), content_type().as_ref());
+        assert!(result.header().is_none());
+        let (frames, _) = collect(result.into_body());
+        assert_eq!(frames, [body]);
+    }
+
+    #[test]
+    fn single_part_does_not_copy_the_body() {
+        let body = Bytes::from_static(b"hello world");
+        let result = serve(&body, Some("bytes=-5,6-7"), content_type());
+        assert_eq!(result.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(result.content_type(), content_type().as_ref());
+        assert_eq!(
+            result.header(),
+            Some(HttpContentRange::Bound(
+                Bound::new(6..=10, Some(11)).unwrap()
+            ))
+        );
+        let (frames, _) = collect(result.into_body());
+        assert_eq!(frames, [Bytes::from_static(b"world")]);
+        assert_eq!(frames[0].as_ptr(), body[6..].as_ptr());
+    }
+
+    #[test]
+    fn multiple_ranges_are_multipart() {
+        let mut body = vec![b'x'; 200];
+        body[..5].copy_from_slice(b"hello");
+        body[195..].copy_from_slice(b"world");
+        let result = serve(&Bytes::from(body), Some("bytes=-5,0-4"), content_type());
+
+        assert_eq!(result.status(), StatusCode::PARTIAL_CONTENT);
+        assert!(result.header().is_none());
+        let boundary = boundary(&result);
+        let expected = format!(
+            "--{boundary}\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             Content-Range: bytes 195-199/200\r\n\
+             \r\n\
+             world\r\n\
+             --{boundary}\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             Content-Range: bytes 0-4/200\r\n\
+             \r\n\
+             hello\r\n\
+             --{boundary}--\r\n"
+        );
+        assert_eq!(collect(result.into_body()).1, expected.as_bytes());
+    }
+
+    #[test]
+    fn multipart_boundaries_differ() {
+        let body = Bytes::from(vec![b'x'; 200]);
+        let first = serve(&body, Some("bytes=0-0,-1"), None);
+        let second = serve(&body, Some("bytes=0-0,-1"), None);
+        assert_ne!(boundary(&first), boundary(&second));
+    }
+
+    #[test]
+    fn multipart_without_content_type() {
+        let body = Bytes::from((0..=255).collect::<Vec<u8>>());
+        let result = serve(&body, Some("bytes=0-1,100-101"), None);
+
+        assert_eq!(
+            parse_multipart(result),
+            [
+                (
+                    "Content-Range: bytes 0-1/256\r\n".to_owned(),
+                    Bytes::from_static(&[0, 1])
+                ),
+                (
+                    "Content-Range: bytes 100-101/256\r\n".to_owned(),
+                    Bytes::from_static(&[100, 101])
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn multipart_parts_with_crlf_and_dashes() {
+        let mut body = vec![b'.'; 300];
+        body[..10].copy_from_slice(b"\r\n--\r\n--\r\n");
+        body[290..].copy_from_slice(b"--\r\n\r\n--\r\n");
+        let body = Bytes::from(body);
+        let parts = parse_multipart(serve(&body, Some("bytes=0-9,-10"), content_type()));
+
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].1, body.slice(..10));
+        assert_eq!(parts[1].1, body.slice(290..));
+    }
+
+    #[test]
+    fn multipart_with_overlapping_and_unsatisfiable_ranges() {
+        let body = Bytes::from(vec![b'a'; 1000]);
+        let result = serve(
+            &body,
+            Some("bytes=900-949,2000-,0-9,5-14,950-999,-0"),
+            content_type(),
+        );
+
+        let ranges = parse_multipart(result)
+            .into_iter()
+            .map(|(headers, content)| {
+                assert!(headers.starts_with("Content-Type: text/plain; charset=utf-8\r\n"));
+                (headers.lines().nth(1).unwrap().to_owned(), content.len())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ranges,
+            [
+                ("Content-Range: bytes 900-999/1000".to_owned(), 100),
+                ("Content-Range: bytes 0-14/1000".to_owned(), 15),
+            ]
+        );
+    }
+
+    #[test]
+    fn multipart_does_not_copy_the_body() {
+        let body = Bytes::from(vec![b'a'; 64 << 20]);
+        let result = serve(&body, Some("bytes=0-0,100-"), content_type());
+
+        let (frames, _) = collect(result.into_body());
+        assert_eq!(frames.len(), 5);
+        assert_eq!(frames[1].as_ptr(), body.as_ptr());
+        assert_eq!(frames[3].as_ptr(), body[100..].as_ptr());
+        assert_eq!(frames[3].len(), body.len() - 100);
+        assert!(frames[0].len() + frames[2].len() + frames[4].len() < 1024);
+    }
+
+    #[test]
+    fn multipart_length_is_exact_for_any_number_of_parts() {
+        let body = Bytes::from(vec![b'a'; 100_000]);
+        for count in 2..=32 {
+            let ranges = (0..count)
+                .map(|i| format!("{}-{}", i * 3001, i * 3001 + i))
+                .collect::<Vec<_>>()
+                .join(",");
+            let result = serve(&body, Some(&format!("bytes={ranges}")), content_type());
+            let parts = parse_multipart(result);
+            assert_eq!(parts.len(), count);
+        }
+    }
+
+    #[test]
+    fn multiple_unsatisfiable_ranges_are_unsatisfiable() {
+        let body = Bytes::from_static(b"hello");
+        let result =
+            serve_file_with_http_range_multipart(body, parsed("bytes=5-,10-20,-0"), content_type());
+        assert_eq!(
+            result.unwrap_err().header(),
+            HttpContentRange::Unsatisfiable(Unsatisfiable::new(5))
+        );
+    }
+
+    #[test]
+    fn empty_body_with_multiple_ranges() {
+        let result = serve(&Bytes::new(), Some("bytes=0-1,-5"), content_type());
+        assert_eq!(result.status(), StatusCode::OK);
+        assert!(collect(result.into_body()).0.is_empty());
+
+        let result =
+            serve_file_with_http_range_multipart(Bytes::new(), parsed("bytes=0-1,0-"), None);
+        assert!(result.is_err());
+    }
+}
+
+#[cfg(all(feature = "axum", feature = "multipart"))]
+mod axum_multipart_response {
+    use axum_core::{body::Body, response::IntoResponse};
+    use bytes::Bytes;
+    use http::{
+        HeaderValue, StatusCode,
+        header::{CONTENT_RANGE, CONTENT_TYPE},
+    };
+
+    use crate::{multipart::tests::collect, serve_file_with_http_range_multipart};
+
+    fn respond_with(
+        range: Option<&str>,
+        content_type: Option<HeaderValue>,
+    ) -> http::Response<Body> {
+        let body = Bytes::from(vec![b'a'; 100]);
+        let range = range.map(|r| r.parse().unwrap());
+        match serve_file_with_http_range_multipart(body, range, content_type) {
+            Ok(body_range) => body_range.into_response(),
+            Err(unsatisfiable) => unsatisfiable.into_response(),
+        }
+    }
+
+    fn respond(range: Option<&str>) -> http::Response<Body> {
+        respond_with(range, Some(HeaderValue::from_static("text/plain")))
+    }
+
+    fn body(response: http::Response<Body>) -> Vec<u8> {
+        collect(response.into_body()).1
+    }
+
+    #[test]
+    fn full_response() {
+        let response = respond(None);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[CONTENT_TYPE], "text/plain");
+        assert!(response.headers().get(CONTENT_RANGE).is_none());
+        assert_eq!(body(response), [b'a'; 100]);
+    }
+
+    #[test]
+    fn single_part_response() {
+        let response = respond(Some("bytes=0-9,5-19"));
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[CONTENT_TYPE], "text/plain");
+        assert_eq!(response.headers()[CONTENT_RANGE], "bytes 0-19/100");
+        assert_eq!(body(response), [b'a'; 20]);
+    }
+
+    #[test]
+    fn multipart_response() {
+        let response = respond(Some("bytes=0-0,-1"));
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert!(response.headers().get(CONTENT_RANGE).is_none());
+        let boundary = response.headers()[CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .strip_prefix("multipart/byteranges; boundary=")
+            .unwrap()
+            .to_owned();
+
+        assert_eq!(
+            body(response),
+            format!(
+                "--{boundary}\r\n\
+                 Content-Type: text/plain\r\n\
+                 Content-Range: bytes 0-0/100\r\n\
+                 \r\n\
+                 a\r\n\
+                 --{boundary}\r\n\
+                 Content-Type: text/plain\r\n\
+                 Content-Range: bytes 99-99/100\r\n\
+                 \r\n\
+                 a\r\n\
+                 --{boundary}--\r\n"
+            )
+            .as_bytes()
+        );
+    }
+
+    #[test]
+    fn unknown_content_type_is_never_sent() {
+        for range in [None, Some("bytes=0-9")] {
+            let response = respond_with(range, None);
+            assert!(response.headers().get(CONTENT_TYPE).is_none(), "{range:?}");
+        }
+
+        let response = respond_with(Some("bytes=0-0,-1"), None);
+        assert!(
+            response.headers()[CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("multipart/byteranges; boundary=")
+        );
+        assert!(!body(response).windows(13).any(|w| w == b"Content-Type:"));
+    }
+
+    #[test]
+    fn unsatisfiable_response() {
+        let response = respond(Some("bytes=100-,-0"));
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers()[CONTENT_RANGE], "bytes */100");
+    }
+}
+
 #[cfg(feature = "axum")]
 mod axum_range_extractor {
     use std::{
